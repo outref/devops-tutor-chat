@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+from sqlalchemy.orm import selectinload
 from typing import List
 from pydantic import BaseModel
 import uuid
@@ -29,7 +30,7 @@ async def get_conversations(
     try:
         stmt = select(Conversation).where(
             Conversation.user_id == user_id
-        ).order_by(desc(Conversation.updated_at)).limit(limit)
+        ).options(selectinload(Conversation.messages)).order_by(desc(Conversation.updated_at)).limit(limit)
         
         result = await db.execute(stmt)
         conversations = result.scalars().all()
@@ -61,7 +62,7 @@ async def get_conversation(
     try:
         stmt = select(Conversation).where(
             Conversation.id == uuid.UUID(conversation_id)
-        )
+        ).options(selectinload(Conversation.messages))
         
         result = await db.execute(stmt)
         conversation = result.scalar_one_or_none()

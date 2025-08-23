@@ -27,9 +27,9 @@ class Message(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
-    role = Column(SQLEnum(MessageRole), nullable=False)
+    role = Column(String(50), nullable=False)
     content = Column(String, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
-    metadata = Column(JSON, default={})
+    message_metadata = Column(JSON, default={})
     
     conversation = relationship("Conversation", back_populates="messages")

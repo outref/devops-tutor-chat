@@ -13,5 +13,5 @@ class Document(Base):
     content = Column(String, nullable=False)
     topic = Column(String(255), nullable=False, index=True)
     embedding = Column(Vector(1536))  # OpenAI embeddings dimension
-    metadata = Column(JSON, default={})
+    document_metadata = Column(JSON, default={})
     created_at = Column(DateTime, server_default=func.now())

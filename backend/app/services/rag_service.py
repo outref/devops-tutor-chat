@@ -34,7 +34,7 @@ class RAGService:
                     content=content,
                     topic=topic,
                     embedding=embedding,
-                    metadata=metadata or {}
+                    document_metadata=metadata or {}
                 )
                 
                 session.add(document)
@@ -65,7 +65,7 @@ class RAGService:
                             content=chunk,
                             topic=doc_data['topic'],
                             embedding=embedding,
-                            metadata=doc_data.get('metadata', {})
+                            document_metadata=doc_data.get('metadata', {})
                         )
                         
                         session.add(document)
@@ -109,7 +109,7 @@ class RAGService:
                         "title": doc.title,
                         "content": doc.content,
                         "topic": doc.topic,
-                        "metadata": doc.metadata
+                        "metadata": doc.document_metadata
                     })
                 
                 return results

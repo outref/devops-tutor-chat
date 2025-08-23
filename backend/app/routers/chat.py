@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 import uuid
 from datetime import datetime
@@ -18,7 +18,7 @@ chatbot = DevOpsChatbot()
 # Pydantic models
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
-    conversation_id: str = Field(None, description="Existing conversation ID")
+    conversation_id: Optional[str] = Field(None, description="Existing conversation ID")
     user_id: str = Field(default="default_user")
 
 class ChatResponse(BaseModel):
@@ -63,7 +63,7 @@ async def send_message(
         # Add user message
         user_message = Message(
             conversation_id=conversation.id,
-            role=MessageRole.USER,
+            role=MessageRole.USER.value,
             content=request.message
         )
         db.add(user_message)
@@ -78,7 +78,7 @@ async def send_message(
         
         # Convert to format expected by chatbot
         message_dicts = [
-            {"role": msg.role.value, "content": msg.content}
+            {"role": msg.role, "content": msg.content}
             for msg in messages
         ]
         
@@ -98,7 +98,7 @@ async def send_message(
         # Add assistant response
         assistant_message = Message(
             conversation_id=conversation.id,
-            role=MessageRole.ASSISTANT,
+            role=MessageRole.ASSISTANT.value,
             content=response_content
         )
         db.add(assistant_message)
@@ -133,7 +133,7 @@ async def get_messages(
         return [
             MessageResponse(
                 id=str(msg.id),
-                role=msg.role.value,
+                role=msg.role,
                 content=msg.content,
                 created_at=msg.created_at
             )

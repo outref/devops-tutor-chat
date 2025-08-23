@@ -16,14 +16,22 @@ const mcpProcess = spawn('node', ['dist/index.js'], {
     MAX_BROWSERS: process.env.MAX_BROWSERS || '2',
     BROWSER_HEADLESS: 'true',
     ENABLE_RELEVANCE_CHECKING: process.env.ENABLE_RELEVANCE_CHECKING || 'true',
-    RELEVANCE_THRESHOLD: process.env.RELEVANCE_THRESHOLD || '0.3',
-    PLAYWRIGHT_BROWSERS_PATH: '/usr/bin'
+    RELEVANCE_THRESHOLD: process.env.RELEVANCE_THRESHOLD || '0.3'
   }
 });
 
-// Log MCP process stderr for debugging
+// Log MCP process output for debugging
 mcpProcess.stderr.on('data', (data) => {
-  console.error('MCP Server Error:', data.toString());
+  console.log('MCP Server:', data.toString().trim());
+});
+
+mcpProcess.stdout.on('data', (data) => {
+  // Don't log stdout as it contains JSON-RPC responses
+  // Only log when it's not JSON-RPC traffic
+  const message = data.toString().trim();
+  if (!message.startsWith('{"jsonrpc"') && message.length > 0) {
+    console.log('MCP Server:', message);
+  }
 });
 
 // Handle MCP process exit

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role VARCHAR(50) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    metadata JSONB DEFAULT '{}'::jsonb
+    message_metadata JSONB DEFAULT '{}'::jsonb
 );
 
 -- Create documents table for RAG
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS documents (
     content TEXT NOT NULL,
     topic VARCHAR(255) NOT NULL,
     embedding vector(1536),
-    metadata JSONB DEFAULT '{}'::jsonb,
+    document_metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
