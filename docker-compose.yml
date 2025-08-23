@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 services:
   postgres:
@@ -19,6 +19,29 @@ services:
       timeout: 5s
       retries: 5
 
+  web-search-mcp:
+    build:
+      context: ./web-search-mcp
+      dockerfile: Dockerfile
+    container_name: web-search-mcp
+    environment:
+      MAX_CONTENT_LENGTH: "15000"
+      DEFAULT_TIMEOUT: "6000"
+      MAX_BROWSERS: "2"
+      BROWSER_HEADLESS: "true"
+      ENABLE_RELEVANCE_CHECKING: "true"
+      RELEVANCE_THRESHOLD: "0.3"
+    volumes:
+      - /dev/shm:/dev/shm  # Shared memory for browsers
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "/bin/sh", "-c", "nc -z 127.0.0.1 3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   backend:
     build:
       context: ./backend
@@ -30,7 +53,7 @@ services:
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-devops-chatbot}
-      MCP_WEB_SEARCH_URL: ${MCP_WEB_SEARCH_URL:-http://localhost:3000}
+      MCP_SERVER_URL: http://web-search-mcp:3000
     volumes:
       - ./data:/app/data
       - ./backend:/app
@@ -38,6 +61,8 @@ services:
       - "8000:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      web-search-mcp:
         condition: service_healthy
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 

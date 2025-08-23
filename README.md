@@ -6,7 +6,7 @@ A conversational AI assistant for learning DevOps topics, powered by LangChain/L
 
 - 🤖 **AI-Powered Learning**: Interactive chatbot specialized in DevOps topics
 - 📚 **RAG Integration**: Retrieval-Augmented Generation for accurate, context-aware responses
-- 🔍 **MCP Web Search**: Falls back to web search when local knowledge is insufficient
+- 🔍 **Web Search Integration**: Local web search powered by web-search-mcp server (no API key required)
 - 💬 **Conversation History**: Persistent chat history with session management
 - 🎯 **Topic Focus**: Stays on-topic and prevents unrelated conversations
 - 🎨 **Modern UI**: Beautiful chat interface inspired by AI assistants like Claude
@@ -29,7 +29,6 @@ A conversational AI assistant for learning DevOps topics, powered by LangChain/L
 - Docker and Docker Compose
 - OpenAI API Key (for the LLM)
 - (Optional) LangChain API Key for tracing
-- (Optional) MCP Web Search server
 
 ## Quick Start
 
@@ -83,7 +82,7 @@ A conversational AI assistant for learning DevOps topics, powered by LangChain/L
 
 1. **Topic Extraction**: When a user starts a conversation, the system extracts the DevOps topic
 2. **RAG Search**: First searches the local knowledge base using vector similarity
-3. **Web Search Fallback**: If local knowledge is insufficient, queries the MCP web search server
+3. **Web Search Enhancement**: Performs multi-engine web search for comprehensive, up-to-date information
 4. **Response Generation**: Combines context from RAG/web search to generate educational responses
 5. **Topic Validation**: Ensures conversations stay focused on the initial DevOps topic
 
@@ -116,9 +115,6 @@ LANGCHAIN_API_KEY=your_langchain_api_key
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_PROJECT=devops-chatbot
 
-# MCP Web Search
-MCP_WEB_SEARCH_URL=http://localhost:3000
-
 # Frontend
 VITE_API_URL=http://localhost:8000
 ```
@@ -145,13 +141,23 @@ npm run dev
 
 Edit `backend/seed_data.py` to add more DevOps topics and content to the RAG knowledge base.
 
-## MCP Integration
+## Web Search Integration
 
-The chatbot can integrate with MCP (Model Context Protocol) servers for enhanced web search capabilities. If the MCP server is not available, it falls back to predefined DevOps content.
+The chatbot integrates with web-search-mcp server through the MCP (Model Context Protocol) for enhanced web search capabilities. This provides:
 
-To set up an MCP web search server:
-1. Deploy an MCP-compatible web search server
-2. Update `MCP_WEB_SEARCH_URL` in your `.env` file
+- **Multi-Engine Search**: Automatically tries Bing, Brave, and DuckDuckGo for best results
+- **Full Content Extraction**: Fetches and extracts complete page content from search results
+- **No API Key Required**: Works with direct connections to search engines
+- **Smart Fallbacks**: Automatically switches between browser and HTTP requests for reliability
+- **Concurrent Processing**: Extracts content from multiple pages simultaneously
+
+### Available Search Tools
+
+1. **Full Web Search**: Comprehensive search with content extraction
+2. **Search Summaries**: Lightweight search returning only snippets
+3. **Page Content Extraction**: Extract content from specific URLs
+
+The web-search-mcp server runs automatically as part of the Docker Compose stack with Playwright browsers for reliable content extraction.
 
 ## Troubleshooting
 
