@@ -166,22 +166,15 @@ const isLoginMode = ref(true)
 const username = ref('')
 const password = ref('')
 
-// Emit events
-const emit = defineEmits(['authenticated'])
+// No longer need emit events - using watcher approach
 
 const handleSubmit = async () => {
   if (!username.value || !password.value) return
   
-  let success = false
-  
   if (isLoginMode.value) {
-    success = await login(username.value, password.value)
+    await login(username.value, password.value)
   } else {
-    success = await register(username.value, password.value)
-  }
-  
-  if (success) {
-    emit('authenticated')
+    await register(username.value, password.value)
   }
 }
 </script>

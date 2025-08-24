@@ -22,6 +22,12 @@ class ChatState(dict):
     is_first_message: bool
     topic_category_valid: bool
     is_valid: bool
+    # Quiz-related state
+    is_quiz_mode: bool
+    quiz_questions: Optional[List[Dict[str, Any]]]
+    current_quiz_index: Optional[int]
+    quiz_scores: Optional[List[Dict[str, Any]]]
+    used_quiz_questions: Optional[List[str]]  # Track questions asked across sessions
 
 class DevOpsChatbot:
     def __init__(self):
@@ -49,9 +55,13 @@ class DevOpsChatbot:
         workflow.add_node("web_search", self._web_search)
         workflow.add_node("generate_lesson", self._generate_lesson)
         workflow.add_node("generate_response", self._generate_response)
+        # Quiz nodes
+        workflow.add_node("generate_quiz_questions", self._generate_quiz_questions)
+        workflow.add_node("process_quiz_answer", self._process_quiz_answer)
         
-        # Add edges
+        # Set entry point and add conditional routing
         workflow.set_entry_point("topic_extraction")
+        
         workflow.add_edge("topic_extraction", "topic_category_validation")
         workflow.add_conditional_edges(
             "topic_category_validation",
@@ -59,7 +69,9 @@ class DevOpsChatbot:
             {
                 "valid_first": "rag_search",  # First message with valid category
                 "valid_subsequent": "topic_validation",  # Subsequent messages
-                "invalid": "generate_response"  # Invalid category
+                "invalid": "generate_response",  # Invalid category
+                "quiz_generation": "generate_quiz_questions",  # Start quiz
+                "quiz_answer": "process_quiz_answer"  # Process quiz answer
             }
         )
         workflow.add_conditional_edges(
@@ -67,7 +79,9 @@ class DevOpsChatbot:
             self._route_after_topic_validation,
             {
                 "valid": "rag_search",
-                "invalid": "generate_response"
+                "invalid": "generate_response",
+                "quiz_generation": "generate_quiz_questions",
+                "quiz_answer": "process_quiz_answer"
             }
         )
         workflow.add_edge("rag_search", "web_search")
@@ -81,6 +95,8 @@ class DevOpsChatbot:
         )
         workflow.add_edge("generate_lesson", END)
         workflow.add_edge("generate_response", END)
+        workflow.add_edge("generate_quiz_questions", END)
+        workflow.add_edge("process_quiz_answer", END)
         
         return workflow.compile(checkpointer=self.memory)
     
@@ -142,6 +158,10 @@ class DevOpsChatbot:
             # Determine if this is the first message
             state["is_first_message"] = len(messages) == 1
             
+            # Skip topic extraction if we're in quiz mode - topic is already set
+            if state.get("is_quiz_mode", False):
+                return state
+            
             # For new conversations, topic is already pre-validated and set
             # For existing conversations with first message, we still need to extract topic
             if state["is_first_message"] and not state.get("topic"):
@@ -169,6 +189,11 @@ class DevOpsChatbot:
         try:
             messages = state["messages"]
             topic = state.get("topic", "")
+            
+            # Skip validation if we're in quiz mode - topic is already validated
+            if state.get("is_quiz_mode", False):
+                state["topic_category_valid"] = True
+                return state
             
             if state["is_first_message"]:
                 # For new conversations, topic is already pre-validated at endpoint level
@@ -212,6 +237,11 @@ class DevOpsChatbot:
         messages = state["messages"]
         topic = state.get("topic", "")
         
+        # Skip validation if we're in quiz mode - quiz answers should always be considered valid
+        if state.get("is_quiz_mode", False):
+            state["is_valid"] = True
+            return state
+        
         # This is only called for subsequent messages
         prompt = ChatPromptTemplate.from_messages([
             ("system", f"Determine if the user's message is related to the topic '{topic}'. Respond with 'yes' or 'no' only."),
@@ -227,18 +257,53 @@ class DevOpsChatbot:
     
     def _route_after_category_validation(self, state: ChatState) -> str:
         """Route based on topic category validation"""
+        # Check for quiz mode first
+        is_quiz_mode = state.get("is_quiz_mode", False)
+        has_questions = state.get("quiz_questions") is not None
+        has_index = state.get("current_quiz_index") is not None
+        
+        logger.info(f"Routing after category validation - Quiz mode: {is_quiz_mode}, Has questions: {has_questions}, Has index: {has_index}")
+        
+        if is_quiz_mode:
+            if has_questions and has_index:
+                logger.info("Routing to quiz_answer")
+                return "quiz_answer"
+            else:
+                logger.info("Routing to quiz_generation")
+                return "quiz_generation"
+        
         if not state.get("topic_category_valid", False):
+            logger.info("Routing to invalid - topic category not valid")
             return "invalid"
         
         if state["is_first_message"]:
+            logger.info("Routing to valid_first")
             return "valid_first"
         else:
+            logger.info("Routing to valid_subsequent")
             return "valid_subsequent"
     
     def _route_after_topic_validation(self, state: ChatState) -> str:
         """Route based on topic validation for subsequent messages"""
+        # Check for quiz mode first
+        is_quiz_mode = state.get("is_quiz_mode", False)
+        has_questions = state.get("quiz_questions") is not None
+        has_index = state.get("current_quiz_index") is not None
+        
+        logger.info(f"Routing after topic validation - Quiz mode: {is_quiz_mode}, Has questions: {has_questions}, Has index: {has_index}")
+        
+        if is_quiz_mode:
+            if has_questions and has_index:
+                logger.info("Routing to quiz_answer from topic validation")
+                return "quiz_answer"
+            else:
+                logger.info("Routing to quiz_generation from topic validation")
+                return "quiz_generation"
+                
         if state.get("is_valid", True):
+            logger.info("Routing to valid")
             return "valid"
+        logger.info("Routing to invalid - topic not valid")
         return "invalid"
     
     def _route_after_web_search(self, state: ChatState) -> str:
@@ -512,8 +577,359 @@ Return only the key concepts as a concise phrase (2-8 words max)."""),
         state["current_response"] = response.content
         return state
     
-    async def process_message(self, messages: List[Dict[str, str]], conversation_id: str, conversation_topic: str = "") -> str:
-        """Process a message through the graph"""
+    async def _generate_quiz_questions(self, state: ChatState) -> ChatState:
+        """Generate quiz questions based on conversation history"""
+        messages = state["messages"]
+        topic = state.get("topic", "")
+        used_questions = state.get("used_quiz_questions", [])
+        
+        # Also try to get used questions from previous messages in the conversation
+        for msg in messages:
+            if isinstance(msg, AIMessage) and "Quiz Complete!" in getattr(msg, 'content', ''):
+                # This was a completed quiz - try to extract questions that were asked
+                continue
+        
+        logger.info(f"Starting quiz generation with {len(used_questions)} previously used questions")
+        
+        # Build conversation context
+        conversation_history = []
+        for msg in messages[:-1]:  # Exclude the quiz request message
+            if isinstance(msg, HumanMessage):
+                conversation_history.append(f"User: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                conversation_history.append(f"Assistant: {msg.content[:200]}...")  # Truncate long responses
+        
+        context = "\n".join(conversation_history)
+        
+        # Generate quiz questions
+        quiz_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are creating an interactive quiz based on the conversation history. You MUST respond with ONLY a valid JSON array, nothing else.
+
+Generate 5 COMPLETELY DIFFERENT quiz questions that test understanding of the concepts discussed.
+
+CRITICAL REQUIREMENTS:
+- Questions MUST be directly related to what was discussed in the conversation
+- Create DIVERSE questions covering different aspects of the topic
+- Mix question types: multiple choice, true/false, and short answer
+- Test understanding and application, NOT just memorization
+- Questions should be SIGNIFICANTLY DIFFERENT from any previously asked questions
+
+AVOID REPETITION: Do NOT create questions similar to previously asked ones. If previous questions exist, create questions about different aspects, use different wording, focus on different concepts, or ask about related but distinct topics.
+
+JSON FORMAT REQUIRED:
+[
+  {{
+    "question": "What is the main purpose of Docker containers?",
+    "type": "multiple_choice", 
+    "options": ["Virtual machine replacement", "Application containerization", "Network management", "Storage solutions"],
+    "correct_answer": "Application containerization",
+    "explanation": "Docker containers provide lightweight containerization for applications."
+  }}
+]
+
+CRITICAL: 
+- For multiple choice: options array MUST contain ONLY plain text, NO letter prefixes like "A.", "B.", "C.", "D."
+- WRONG: "options": ["A. Virtual machines", "B. Containers"] 
+- CORRECT: "options": ["Virtual machines", "Containers"]
+
+Return ONLY the JSON array. No explanations, no markdown, no code blocks.
+
+Previously asked questions to AVOID repeating:
+""" + ("\n- " + "\n- ".join(used_questions) if used_questions else "None")),
+            ("user", f"Topic: {topic}\n\nConversation History:\n{context}\n\nGenerate 5 NEW and DIFFERENT quiz questions as JSON:")
+        ])
+        
+        response = await self.llm.ainvoke(
+            quiz_prompt.format_messages()
+        )
+        
+        try:
+            import json
+            import re
+            
+            # Log the raw response for debugging
+            logger.info(f"Raw quiz generation response: {response.content[:500]}...")
+            
+            # Extract JSON from response with multiple strategies
+            json_str = response.content.strip()
+            
+            # Strategy 1: Look for JSON code block
+            if "```json" in json_str.lower():
+                json_match = re.search(r'```json\s*(.*?)\s*```', json_str, re.DOTALL | re.IGNORECASE)
+                if json_match:
+                    json_str = json_match.group(1).strip()
+            elif "```" in json_str:
+                json_match = re.search(r'```\s*(.*?)\s*```', json_str, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1).strip()
+            
+            # Strategy 2: Look for array starting with [
+            if not json_str.startswith('['):
+                array_match = re.search(r'\[.*\]', json_str, re.DOTALL)
+                if array_match:
+                    json_str = array_match.group(0)
+            
+            logger.info(f"Extracted JSON string: {json_str[:200]}...")
+            
+            # Parse JSON
+            quiz_questions = json.loads(json_str)
+            
+            # Validate structure
+            if not isinstance(quiz_questions, list):
+                raise ValueError("Quiz questions should be a list")
+            
+            if len(quiz_questions) == 0:
+                raise ValueError("No quiz questions generated")
+            
+            # Ensure we have at most 5 questions
+            if len(quiz_questions) > 5:
+                quiz_questions = quiz_questions[:5]
+            
+            # Validate and normalize each question
+            for i, q in enumerate(quiz_questions):
+                if not isinstance(q, dict):
+                    raise ValueError(f"Question {i+1} is not a dictionary")
+                if "question" not in q:
+                    raise ValueError(f"Question {i+1} missing 'question' field")
+                
+                # Normalize field names and add missing fields
+                if "answer" in q and "correct_answer" not in q:
+                    q["correct_answer"] = q["answer"]
+                    del q["answer"]
+                
+                if "correct_answer" not in q:
+                    raise ValueError(f"Question {i+1} missing answer field")
+                
+                # Add type based on presence of options
+                if "type" not in q:
+                    if "options" in q and len(q.get("options", [])) > 0:
+                        q["type"] = "multiple_choice"
+                    else:
+                        q["type"] = "short_answer"
+                
+                # Randomize multiple choice options to distribute correct answers
+                if q["type"] == "multiple_choice" and "options" in q:
+                    import random
+                    import re
+                    options = q["options"]
+                    correct_text = q["correct_answer"]
+                    
+                    # Clean options by removing any existing letter prefixes (A., B., etc.)
+                    cleaned_options = []
+                    for option in options:
+                        # Remove letter prefixes like "A. ", "B. ", etc.
+                        cleaned_option = re.sub(r'^[A-D]\.\s*', '', option.strip())
+                        cleaned_options.append(cleaned_option)
+                    
+                    # Create a list of (option_text, is_correct) tuples
+                    option_tuples = []
+                    for option in cleaned_options:
+                        # Check if this option matches the correct answer
+                        is_correct = (option.strip().lower() == correct_text.strip().lower() or 
+                                    correct_text.strip().lower() in option.strip().lower() or 
+                                    option.strip().lower() in correct_text.strip().lower())
+                        option_tuples.append((option, is_correct))
+                    
+                    # Shuffle the options
+                    random.shuffle(option_tuples)
+                    
+                    # Rebuild the options list and find new correct answer position
+                    shuffled_options = []
+                    new_correct_letter = None
+                    
+                    for idx, (option_text, is_correct) in enumerate(option_tuples):
+                        shuffled_options.append(option_text)
+                        if is_correct:
+                            new_correct_letter = chr(65 + idx)  # A, B, C, D
+                    
+                    # Update the question with cleaned and shuffled options
+                    q["options"] = shuffled_options
+                    if new_correct_letter:
+                        q["correct_answer"] = new_correct_letter
+                        logger.info(f"Question {i+1}: Randomized options, correct answer is now '{new_correct_letter}'")
+                    else:
+                        # Fallback - set first option as correct
+                        q["correct_answer"] = "A"
+                        logger.warning(f"Question {i+1}: Could not identify correct option after shuffle, defaulting to 'A'")
+                
+                # Add default explanation if missing
+                if "explanation" not in q:
+                    q["explanation"] = f"This question tests your understanding of the concepts discussed about {topic}."
+            
+            state["quiz_questions"] = quiz_questions
+            state["current_quiz_index"] = 0
+            state["quiz_scores"] = []
+            
+            # Return the first question
+            first_question = quiz_questions[0]
+            question_text = self._format_quiz_question(first_question, 1)
+            state["current_response"] = question_text
+            
+            logger.info(f"Successfully generated {len(quiz_questions)} quiz questions")
+            
+        except Exception as e:
+            logger.error(f"Error parsing quiz questions: {e}")
+            logger.error(f"Raw response was: {response.content}")
+            
+            # Fallback: Generate a simple quiz question manually
+            fallback_questions = [
+                {
+                    "question": f"Based on our discussion about {topic}, what is the main benefit of this technology?",
+                    "type": "short_answer",
+                    "correct_answer": "Various benefits including efficiency, automation, and scalability",
+                    "explanation": "This technology provides multiple advantages in modern development and operations."
+                }
+            ]
+            
+            state["quiz_questions"] = fallback_questions
+            state["current_quiz_index"] = 0
+            state["quiz_scores"] = []
+            state["current_response"] = self._format_quiz_question(fallback_questions[0], 1) + "\n\n*Note: Using simplified quiz due to generation error.*"
+        
+        return state
+    
+    async def _process_quiz_answer(self, state: ChatState) -> ChatState:
+        """Process user's quiz answer and provide feedback"""
+        logger.info("Processing quiz answer")
+        
+        messages = state["messages"]
+        user_answer = messages[-1].content
+        quiz_questions = state.get("quiz_questions", [])
+        current_index = state.get("current_quiz_index", 0)
+        quiz_scores = state.get("quiz_scores", [])
+        
+        logger.info(f"User answer: '{user_answer}', Current index: {current_index}, Quiz questions count: {len(quiz_questions)}")
+        
+        if not quiz_questions or current_index >= len(quiz_questions):
+            logger.error("No quiz in progress or invalid index")
+            state["current_response"] = "No quiz in progress."
+            return state
+        
+        current_question = quiz_questions[current_index]
+        
+        # Evaluate the answer
+        evaluation_prompt = ChatPromptTemplate.from_messages([
+            ("system", """Evaluate the user's answer to the quiz question. Be encouraging and educational.
+
+Question: {question}
+Question Type: {q_type}
+Correct Answer: {correct_answer}
+User Answer: {user_answer}
+
+CRITICAL: You must start your response with EXACTLY one of these:
+- "CORRECT:" if the answer is right
+- "INCORRECT:" if the answer is wrong
+
+For multiple choice questions:
+- Compare the user's letter (A, B, C, D) with the option that matches the correct answer
+- Be flexible: accept both letter answers and full text answers
+- "A", "B", "C", "D" should be treated as selecting that option
+
+For short answer questions:
+- Be flexible and accept answers that demonstrate understanding
+- Look for key concepts rather than exact wording
+
+Format your response as:
+CORRECT: [Brief explanation and educational insight]
+OR
+INCORRECT: The correct answer is [correct answer]. [Brief explanation and educational insight]"""),
+            ("user", "Evaluate this answer")
+        ])
+        
+        # Build context for evaluation
+        question_context = current_question["question"]
+        if current_question["type"] == "multiple_choice" and "options" in current_question:
+            options = current_question["options"]
+            options_text = "\n".join([f"{chr(65 + i)}. {option}" for i, option in enumerate(options)])
+            question_context = f"{current_question['question']}\n\nOptions:\n{options_text}"
+        
+        response = await self.llm.ainvoke(
+            evaluation_prompt.format_messages(
+                question=question_context,
+                q_type=current_question["type"],
+                correct_answer=current_question["correct_answer"],
+                user_answer=user_answer
+            )
+        )
+        
+        # Parse evaluation
+        evaluation = response.content.strip()
+        is_correct = evaluation.upper().startswith("CORRECT:")
+        
+        logger.info(f"Evaluation response: {evaluation[:100]}...")
+        logger.info(f"Parsed as correct: {is_correct}")
+        
+        # Store score
+        quiz_scores.append({
+            "question_index": current_index,
+            "correct": is_correct,
+            "user_answer": user_answer
+        })
+        state["quiz_scores"] = quiz_scores
+        
+        # Build response
+        feedback = evaluation
+        
+        # Check if quiz is complete
+        if current_index + 1 >= len(quiz_questions):
+            # Quiz complete
+            correct_count = sum(1 for score in quiz_scores if score["correct"])
+            total_count = len(quiz_scores)
+            
+            completion_message = f"\n\n🎉 **Quiz Complete!**\nYour score: {correct_count}/{total_count}\n"
+            if correct_count == total_count:
+                completion_message += "Perfect score! Excellent understanding! 🌟"
+            elif correct_count >= total_count * 0.8:
+                completion_message += "Great job! You have a strong grasp of the concepts! 💪"
+            elif correct_count >= total_count * 0.6:
+                completion_message += "Good effort! Keep learning and you'll master these concepts! 📚"
+            else:
+                completion_message += "Keep practicing! Review the conversation and try again when ready! 🚀"
+            
+            # Mark questions as used
+            used_questions = state.get("used_quiz_questions", [])
+            for q in quiz_questions:
+                used_questions.append(q["question"])
+            state["used_quiz_questions"] = used_questions
+            logger.info(f"Added {len(quiz_questions)} questions to used list. Total used questions: {len(used_questions)}")
+            
+            state["current_response"] = feedback + completion_message
+            state["is_quiz_mode"] = False  # Exit quiz mode
+        else:
+            # Continue to next question
+            next_index = current_index + 1
+            next_question = quiz_questions[next_index]
+            next_question_text = self._format_quiz_question(next_question, next_index + 1)
+            
+            state["current_quiz_index"] = next_index
+            state["current_response"] = feedback + "\n\n---\n\n" + next_question_text
+        
+        return state
+    
+    def _format_quiz_question(self, question: Dict[str, Any], number: int) -> str:
+        """Format a quiz question for display"""
+        q_type = question["type"]
+        q_text = f"**Question {number}/5:** {question['question']}\n\n"
+        
+        if q_type == "multiple_choice":
+            options = question.get("options", [])
+            for i, option in enumerate(options):
+                q_text += f"{chr(65 + i)}. {option}\n"
+            q_text += "\n*Please enter your answer (A, B, C, or D)*"
+        elif q_type == "true_false":
+            q_text += "*Please answer True or False*"
+        else:  # short_answer
+            q_text += "*Please provide a brief answer*"
+        
+        return q_text
+    
+    async def process_message(self, messages: List[Dict[str, str]], conversation_id: str, conversation_topic: str = "", 
+                            is_quiz_mode: bool = False, quiz_state: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Process a message through the graph
+        
+        Returns a dict with 'response' and optional 'quiz_state' for quiz mode
+        """
         try:
             # Convert messages to BaseMessage objects
             base_messages = []
@@ -535,7 +951,13 @@ Return only the key concepts as a concise phrase (2-8 words max)."""),
                 search_concepts=None,
                 is_first_message=False,
                 topic_category_valid=True if conversation_topic else False,  # Pre-validated topics are valid
-                is_valid=True
+                is_valid=True,
+                # Quiz state
+                is_quiz_mode=is_quiz_mode,
+                quiz_questions=quiz_state.get("quiz_questions") if quiz_state else None,
+                current_quiz_index=quiz_state.get("current_quiz_index") if quiz_state else None,
+                quiz_scores=quiz_state.get("quiz_scores") if quiz_state else None,
+                used_quiz_questions=quiz_state.get("used_quiz_questions", []) if quiz_state else []
             )
             
             # Run the graph
@@ -544,8 +966,22 @@ Return only the key concepts as a concise phrase (2-8 words max)."""),
             
             response = result.get("current_response", "I'm sorry, I couldn't generate a response.")
             logger.info(f"Successfully processed message for conversation {conversation_id}")
-            return response
+            
+            # Build return dict
+            return_data = {"response": response}
+            
+            # Include quiz state if in quiz mode
+            if is_quiz_mode:
+                return_data["quiz_state"] = {
+                    "quiz_questions": result.get("quiz_questions"),
+                    "current_quiz_index": result.get("current_quiz_index"),
+                    "quiz_scores": result.get("quiz_scores"),
+                    "used_quiz_questions": result.get("used_quiz_questions", []),
+                    "is_active": result.get("is_quiz_mode", False)  # Quiz still active?
+                }
+            
+            return return_data
             
         except Exception as e:
             logger.exception(f"Error processing message for conversation {conversation_id}: {e}")
-            return "I'm sorry, I encountered an error while processing your message. Please try again."
+            return {"response": "I'm sorry, I encountered an error while processing your message. Please try again."}

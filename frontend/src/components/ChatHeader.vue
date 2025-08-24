@@ -26,18 +26,6 @@
         
         <!-- Action buttons -->
         <div class="flex items-center gap-2">
-          <!-- Info icon -->
-          <button
-            class="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-            tabindex="0"
-            aria-label="Information about this chat"
-            @click="showInfo"
-          >
-            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </button>
-          
           <!-- Logout button -->
           <button
             class="p-2 hover:bg-red-800/20 rounded-lg transition-colors"
@@ -52,12 +40,26 @@
         </div>
       </div>
     </div>
+    
+    <!-- Logout confirmation modal -->
+    <Modal
+      :isVisible="showLogoutModal"
+      title="Sign Out"
+      message="Are you sure you want to sign out? You will need to login again to access your conversations."
+      confirmText="Sign Out"
+      cancelText="Cancel"
+      variant="danger"
+      @confirm="confirmLogout"
+      @cancel="cancelLogout"
+      @close="cancelLogout"
+    />
   </header>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useAuth } from '../composables/useAuth.js'
+import Modal from './Modal.vue'
 
 const props = defineProps({
   topic: {
@@ -73,6 +75,8 @@ const props = defineProps({
 const emit = defineEmits(['logout'])
 
 const { user, logout } = useAuth()
+
+const showLogoutModal = ref(false)
 
 const displayTitle = computed(() => {
   if (props.isNewConversation) {
@@ -105,14 +109,17 @@ const formatTopic = (topic) => {
   return topicMap[topic.toLowerCase()] || topic.charAt(0).toUpperCase() + topic.slice(1)
 }
 
-const showInfo = () => {
-  alert('This is a DevOps learning chatbot. Ask questions about DevOps topics and I\'ll help you learn with examples and explanations!')
+const handleLogout = () => {
+  showLogoutModal.value = true
 }
 
-const handleLogout = () => {
-  if (confirm('Are you sure you want to sign out?')) {
-    logout()
-    emit('logout')
-  }
+const confirmLogout = () => {
+  showLogoutModal.value = false
+  logout()
+  emit('logout')
+}
+
+const cancelLogout = () => {
+  showLogoutModal.value = false
 }
 </script>

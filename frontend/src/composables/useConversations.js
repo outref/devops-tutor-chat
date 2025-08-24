@@ -3,18 +3,32 @@ import { useAuth } from './useAuth.js'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+// Global state - shared across all component instances
+const conversations = ref([])
+const isLoading = ref(false)
+
 export const useConversations = () => {
   const { getAuthHeaders } = useAuth()
-  const conversations = ref([])
-  const isLoading = ref(false)
   
-  const loadConversations = async () => {
+  const loadConversations = async (retryCount = 0) => {
     isLoading.value = true
     
     try {
+      const authHeaders = getAuthHeaders()
+      
+      // If no auth headers and this is the first attempt, wait a bit and retry
+      if (Object.keys(authHeaders).length === 0 && retryCount === 0) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        return await loadConversations(1)
+      }
+      
+      if (Object.keys(authHeaders).length === 0) {
+        throw new Error('No authentication credentials available')
+      }
+      
       const response = await fetch(`${API_URL}/api/conversations/?limit=20`, {
         headers: {
-          ...getAuthHeaders()
+          ...authHeaders
         }
       })
       
@@ -23,10 +37,12 @@ export const useConversations = () => {
         throw new Error(error.detail || 'Failed to load conversations')
       }
       
-      conversations.value = await response.json()
+      const data = await response.json()
+      conversations.value = data
     } catch (error) {
       console.error('Error loading conversations:', error)
       conversations.value = []
+      throw error // Re-throw so caller can handle it
     } finally {
       isLoading.value = false
     }
@@ -54,10 +70,15 @@ export const useConversations = () => {
     }
   }
   
+  const clearConversations = () => {
+    conversations.value = []
+  }
+  
   return {
     conversations,
     isLoading,
     loadConversations,
-    deleteConversation
+    deleteConversation,
+    clearConversations
   }
 }

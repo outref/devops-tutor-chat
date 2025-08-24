@@ -7,7 +7,7 @@ export const useChat = () => {
   const { getAuthHeaders } = useAuth()
   const isLoading = ref(false)
   
-  const sendMessage = async (message, conversationId = null) => {
+  const sendMessage = async (message, conversationId = null, isQuizMode = false) => {
     isLoading.value = true
     
     try {
@@ -19,7 +19,8 @@ export const useChat = () => {
         },
         body: JSON.stringify({
           message,
-          conversation_id: conversationId
+          conversation_id: conversationId,
+          is_quiz_mode: isQuizMode
         })
       })
       
@@ -57,9 +58,39 @@ export const useChat = () => {
     }
   }
   
+  const startQuiz = async (conversationId) => {
+    isLoading.value = true
+    
+    try {
+      const response = await fetch(`${API_URL}/api/chat/start-quiz`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId
+        })
+      })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to start quiz')
+      }
+      
+      return await response.json()
+    } catch (error) {
+      console.error('Error starting quiz:', error)
+      throw error
+    } finally {
+      isLoading.value = false
+    }
+  }
+  
   return {
     sendMessage,
     getMessages,
+    startQuiz,
     isLoading
   }
 }

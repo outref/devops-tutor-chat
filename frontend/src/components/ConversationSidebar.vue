@@ -68,11 +68,25 @@
     <div class="p-4 border-t border-gray-800 text-xs text-gray-500">
       <p>DevOps Learning Assistant</p>
     </div>
+    
+    <!-- Delete confirmation modal -->
+    <Modal
+      :isVisible="showDeleteModal"
+      title="Delete Conversation"
+      :message="`Are you sure you want to delete this conversation? This action cannot be undone.`"
+      confirmText="Delete"
+      cancelText="Cancel"
+      variant="danger"
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
+      @close="cancelDelete"
+    />
   </div>
 </template>
 
 <script setup>
-import { defineProps, defineEmits } from 'vue'
+import { defineProps, defineEmits, ref } from 'vue'
+import Modal from './Modal.vue'
 
 const props = defineProps({
   conversations: {
@@ -86,6 +100,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select-conversation', 'new-conversation', 'delete-conversation'])
+
+const showDeleteModal = ref(false)
+const conversationToDelete = ref(null)
 
 const formatTopic = (topic) => {
   if (!topic || topic === 'pending') return 'New Chat'
@@ -105,8 +122,20 @@ const formatDate = (dateString) => {
 }
 
 const handleDelete = (conversationId) => {
-  if (confirm('Are you sure you want to delete this conversation?')) {
-    emit('delete-conversation', conversationId)
+  conversationToDelete.value = conversationId
+  showDeleteModal.value = true
+}
+
+const confirmDelete = () => {
+  if (conversationToDelete.value) {
+    emit('delete-conversation', conversationToDelete.value)
+    conversationToDelete.value = null
   }
+  showDeleteModal.value = false
+}
+
+const cancelDelete = () => {
+  conversationToDelete.value = null
+  showDeleteModal.value = false
 }
 </script>

@@ -12,7 +12,7 @@
           </svg>
         </div>
         <h2 class="text-2xl font-semibold text-kk-text mb-2">Welcome to DevOps Learning Assistant</h2>
-        <p class="text-gray-400">Start by asking about a DevOps topic you'd like to learn!</p>
+        <p class="text-gray-400">Pick any topic on DevOps that interests you!</p>
       </div>
       
       <!-- Suggested topics -->
@@ -83,7 +83,7 @@ const scrollContainer = ref(null)
 const suggestedTopics = [
   {
     name: 'Kubernetes',
-    prompt: 'I want to learn about Kubernetes',
+    prompt: 'Give me a lesson on Kubernetes',
     description: 'Container orchestration platform',
     color: 'bg-blue-600',
     icon: defineComponent({
@@ -94,7 +94,7 @@ const suggestedTopics = [
   },
   {
     name: 'Docker',
-    prompt: 'Teach me about Docker containers',
+    prompt: 'Give me a lesson on Docker',
     description: 'Application containerization',
     color: 'bg-cyan-600',
     icon: defineComponent({
@@ -105,7 +105,7 @@ const suggestedTopics = [
   },
   {
     name: 'CI/CD',
-    prompt: 'Explain CI/CD pipelines',
+    prompt: 'Give me a lesson on CI/CD',
     description: 'Continuous Integration & Deployment',
     color: 'bg-green-600',
     icon: defineComponent({
@@ -116,7 +116,7 @@ const suggestedTopics = [
   },
   {
     name: 'AWS CLI',
-    prompt: 'Show me AWS CLI commands',
+    prompt: 'Give me a lesson on AWS CLI',
     description: 'Amazon Web Services CLI',
     color: 'bg-orange-600',
     icon: defineComponent({
