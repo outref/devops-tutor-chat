@@ -60,10 +60,20 @@ async def send_message(
             if not conversation:
                 raise HTTPException(status_code=404, detail="Conversation not found")
         else:
-            # Create new conversation (topic will be set after first message)
+            # For new conversations, validate topic first
+            is_valid_topic, extracted_topic, validation_reason = await chatbot.validate_first_message_topic(request.message)
+            
+            if not is_valid_topic:
+                logger.info(f"Rejected new conversation for invalid topic: {validation_reason}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail="I can only help with topics related to Programming, DevOps, and AI/Machine Learning. Please ask a question about software development, infrastructure, automation, data science, or related technical topics."
+                )
+            
+            # Create new conversation with validated topic
             conversation = Conversation(
                 user_id=str(current_user.id),
-                topic="pending"
+                topic=extracted_topic
             )
             db.add(conversation)
             await db.commit()
@@ -91,32 +101,12 @@ async def send_message(
             for msg in messages
         ]
         
-        # Process through chatbot
+        # Process through chatbot with conversation topic
         response_content = await chatbot.process_message(
             message_dicts,
-            str(conversation.id)
+            str(conversation.id),
+            conversation.topic
         )
-        
-        # Extract topic from chatbot's state if this is the first message
-        if conversation.topic == "pending" and len(messages) == 1:
-            # Get the topic from the chatbot's internal state
-            config = {"configurable": {"thread_id": str(conversation.id)}}
-            try:
-                # Access the chatbot's memory to get the extracted topic
-                checkpointer = chatbot.memory
-                checkpoint = await checkpointer.aget(config)
-                if checkpoint and "topic" in checkpoint.get("channel_values", {}):
-                    extracted_topic = checkpoint["channel_values"]["topic"]
-                    if extracted_topic and extracted_topic.strip():
-                        conversation.topic = extracted_topic.strip()
-                    else:
-                        conversation.topic = "General"
-                else:
-                    conversation.topic = "General"
-            except Exception as e:
-                # Fallback to general if we can't extract the topic
-                logger.error(f"Error extracting topic from chatbot state: {e}")
-                conversation.topic = "General"
         
         # Update conversation timestamp
         conversation.updated_at = func.now()
@@ -139,8 +129,9 @@ async def send_message(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception(f"Error processing chat message: {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/messages/{conversation_id}", response_model=List[MessageResponse])
 async def get_messages(
@@ -167,4 +158,5 @@ async def get_messages(
             for msg in messages
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error getting messages: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

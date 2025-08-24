@@ -15,6 +15,11 @@ cd backend/rag-data
 - `./seed_rag.sh --force` - Add alongside existing data
 - `./seed_rag.sh custom.csv` - Use different CSV file
 
+##Executing in Docker Compose
+```bash
+docker compose exec backend bash -c "cd /app/rag-data && ./seed_rag.sh"
+```
+
 ## Requirements
 
 - OpenAI API key in `../.env` file

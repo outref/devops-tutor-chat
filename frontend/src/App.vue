@@ -25,6 +25,28 @@
         @logout="handleLogout"
       />
       
+      <!-- Error message -->
+      <div v-if="errorMessage" class="mx-6 mb-4">
+        <div class="max-w-3xl mx-auto p-4 bg-red-900/20 border border-red-500/30 rounded-lg">
+          <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div class="flex-1">
+              <p class="text-red-300 text-sm">{{ errorMessage }}</p>
+              <button 
+                @click="clearError" 
+                class="text-red-400 hover:text-red-300 text-xs mt-2 underline"
+                tabindex="0"
+                aria-label="Dismiss error"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Messages area -->
       <MessageList 
         :messages="messages"
@@ -63,10 +85,14 @@ const messages = ref([])
 const currentConversationId = ref(null)
 const currentTopic = ref('')
 const messageList = ref(null)
+const errorMessage = ref('')
 
 // Methods
 const handleSendMessage = async (content) => {
   if (!content.trim() || isLoading.value) return
+  
+  // Clear any previous error
+  clearError()
   
   // Add user message to UI immediately
   messages.value.push({
@@ -106,15 +132,28 @@ const handleSendMessage = async (content) => {
     messageList.value?.scrollToBottom()
   } catch (error) {
     console.error('Error sending message:', error)
+    
     // Remove the user message if there was an error
     messages.value.pop()
+    
+    // Show error message to user
+    errorMessage.value = error.message || 'An error occurred while sending your message. Please try again.'
+    
+    // Scroll to top to show error if needed
+    await nextTick()
+    messageList.value?.scrollToBottom()
   }
+}
+
+const clearError = () => {
+  errorMessage.value = ''
 }
 
 const handleSelectConversation = async (conversationId) => {
   if (conversationId === currentConversationId.value) return
   
   currentConversationId.value = conversationId
+  clearError()
   
   // Find conversation to get topic
   const conversation = conversations.value.find(c => c.id === conversationId)
@@ -133,6 +172,7 @@ const handleSelectConversation = async (conversationId) => {
   } catch (error) {
     console.error('Error loading messages:', error)
     messages.value = []
+    errorMessage.value = 'Error loading conversation. Please try again.'
   }
 }
 
@@ -140,6 +180,7 @@ const handleNewConversation = () => {
   currentConversationId.value = null
   currentTopic.value = ''
   messages.value = []
+  clearError()
 }
 
 const handleDeleteConversation = async (conversationId) => {

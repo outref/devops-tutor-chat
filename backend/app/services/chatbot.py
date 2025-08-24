@@ -20,11 +20,12 @@ class ChatState(dict):
     current_response: Optional[str]
     is_first_message: bool
     topic_category_valid: bool
+    is_valid: bool
 
 class DevOpsChatbot:
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4.1-mini",
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             temperature=0.7,
             api_key=os.getenv("OPENAI_API_KEY")
         )
@@ -82,35 +83,30 @@ class DevOpsChatbot:
         
         return workflow.compile(checkpointer=self.memory)
     
-    async def _extract_topic(self, state: ChatState) -> ChatState:
-        """Extract or identify the current topic from the conversation"""
-        messages = state["messages"]
+    async def validate_first_message_topic(self, message: str) -> tuple[bool, str, str]:
+        """
+        Validate if a first message is related to allowed topics (Programming/DevOps/AI).
         
-        # Determine if this is the first message
-        state["is_first_message"] = len(messages) == 1
-        
-        # If this is the first message, extract topic
-        if state["is_first_message"]:
-            prompt = ChatPromptTemplate.from_messages([
+        Args:
+            message: The user's first message
+            
+        Returns:
+            Tuple of (is_valid, topic, reason)
+        """
+        try:
+            # Extract topic first
+            topic_prompt = ChatPromptTemplate.from_messages([
                 ("system", "Generate a concise, descriptive topic name (2-4 words max) based on the user's question. Be specific and user-friendly. Examples:\n- 'Jenkins CI/CD' instead of 'cicd'\n- 'Docker Containers' instead of 'docker'\n- 'Kubernetes Deployment' instead of 'kubernetes'\n- 'AWS EC2 Setup' instead of 'aws'\n- 'Terraform Infrastructure' instead of 'terraform'\n- 'Ansible Automation' instead of 'ansible'\n- 'Monitoring & Alerting' instead of 'monitoring'\n- 'Python FastAPI' instead of 'python'\n- 'Machine Learning Basics' instead of 'ml'\nRespond with just the topic name."),
                 ("user", "{message}")
             ])
             
-            response = await self.llm.ainvoke(
-                prompt.format_messages(message=messages[-1].content)
+            topic_response = await self.llm.ainvoke(
+                topic_prompt.format_messages(message=message)
             )
-            state["topic"] = response.content.strip()
-        
-        return state
-    
-    async def _validate_topic_category(self, state: ChatState) -> ChatState:
-        """Validate if the topic is in allowed categories (Programming/DevOps/AI)"""
-        messages = state["messages"]
-        topic = state.get("topic", "")
-        
-        if state["is_first_message"]:
-            # Validate topic category for first message
-            prompt = ChatPromptTemplate.from_messages([
+            topic = topic_response.content.strip().strip("'\"")  # Remove quotes and whitespace
+            
+            # Validate topic category
+            validation_prompt = ChatPromptTemplate.from_messages([
                 ("system", """Determine if the given topic/question is related to Programming, DevOps, or AI/Machine Learning.
                 
                 Programming topics include: web development, software engineering, databases, APIs, frameworks, languages (Python, JavaScript, Java, etc.), software architecture, etc.
@@ -120,19 +116,95 @@ class DevOpsChatbot:
                 AI/ML topics include: machine learning, artificial intelligence, data science, neural networks, deep learning, natural language processing, computer vision, etc.
                 
                 Respond with 'yes' if the topic falls into any of these categories, 'no' if it doesn't."""),
-                ("user", f"Topic: {topic}\nUser message: {messages[-1].content}")
+                ("user", f"Topic: {topic}\nUser message: {message}")
             ])
             
-            response = await self.llm.ainvoke(
-                prompt.format_messages()
+            validation_response = await self.llm.ainvoke(
+                validation_prompt.format_messages()
             )
             
-            state["topic_category_valid"] = response.content.strip().lower() == "yes"
-        else:
-            # For subsequent messages, category is already validated
-            state["topic_category_valid"] = True
+            is_valid = validation_response.content.strip().lower() == "yes"
+            reason = "Topic is within allowed categories" if is_valid else "Topic is not related to Programming, DevOps, or AI/Machine Learning"
             
-        return state
+            return is_valid, topic, reason
+            
+        except Exception as e:
+            logger.error(f"Error validating first message topic: {e}")
+            # Default to invalid on error to be safe
+            return False, "Unknown", f"Validation error: {str(e)}"
+    
+    async def _extract_topic(self, state: ChatState) -> ChatState:
+        """Extract or identify the current topic from the conversation"""
+        try:
+            messages = state["messages"]
+            
+            # Determine if this is the first message
+            state["is_first_message"] = len(messages) == 1
+            
+            # For new conversations, topic is already pre-validated and set
+            # For existing conversations with first message, we still need to extract topic
+            if state["is_first_message"] and not state.get("topic"):
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Generate a concise, descriptive topic name (2-4 words max) based on the user's question. Be specific and user-friendly. Examples:\n- 'Jenkins CI/CD' instead of 'cicd'\n- 'Docker Containers' instead of 'docker'\n- 'Kubernetes Deployment' instead of 'kubernetes'\n- 'AWS EC2 Setup' instead of 'aws'\n- 'Terraform Infrastructure' instead of 'terraform'\n- 'Ansible Automation' instead of 'ansible'\n- 'Monitoring & Alerting' instead of 'monitoring'\n- 'Python FastAPI' instead of 'python'\n- 'Machine Learning Basics' instead of 'ml'\nRespond with just the topic name."),
+                    ("user", "{message}")
+                ])
+                
+                response = await self.llm.ainvoke(
+                    prompt.format_messages(message=messages[-1].content)
+                )
+                state["topic"] = response.content.strip().strip("'\"")  # Remove quotes and whitespace
+            
+            return state
+        except Exception as e:
+            logger.error(f"Error extracting topic: {e}")
+            if not state.get("topic"):
+                state["topic"] = "General"
+            if "is_first_message" not in state:
+                state["is_first_message"] = len(state["messages"]) == 1
+            return state
+    
+    async def _validate_topic_category(self, state: ChatState) -> ChatState:
+        """Validate if the topic is in allowed categories (Programming/DevOps/AI)"""
+        try:
+            messages = state["messages"]
+            topic = state.get("topic", "")
+            
+            if state["is_first_message"]:
+                # For new conversations, topic is already pre-validated at endpoint level
+                # For existing conversations with first message, still need to validate
+                if topic and topic != "General":
+                    # Topic already validated at endpoint level
+                    state["topic_category_valid"] = True
+                else:
+                    # Legacy path - validate topic category for first message
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", """Determine if the given topic/question is related to Programming, DevOps, or AI/Machine Learning.
+                        
+                        Programming topics include: web development, software engineering, databases, APIs, frameworks, languages (Python, JavaScript, Java, etc.), software architecture, etc.
+                        
+                        DevOps topics include: containerization (Docker, Kubernetes), CI/CD, cloud services (AWS, GCP, Azure), infrastructure as code, monitoring, automation, deployment, etc.
+                        
+                        AI/ML topics include: machine learning, artificial intelligence, data science, neural networks, deep learning, natural language processing, computer vision, etc.
+                        
+                        Respond with 'yes' if the topic falls into any of these categories, 'no' if it doesn't."""),
+                        ("user", f"Topic: {topic}\nUser message: {messages[-1].content}")
+                    ])
+                    
+                    response = await self.llm.ainvoke(
+                        prompt.format_messages()
+                    )
+                    
+                    state["topic_category_valid"] = response.content.strip().lower() == "yes"
+            else:
+                # For subsequent messages, category is already validated
+                state["topic_category_valid"] = True
+                
+            return state
+        except Exception as e:
+            logger.error(f"Error validating topic category: {e}")
+            # Default to valid to avoid blocking users on error
+            state["topic_category_valid"] = True
+            return state
         
     async def _validate_topic(self, state: ChatState) -> ChatState:
         """Validate if the message is related to the current topic (for subsequent messages)"""
@@ -231,8 +303,9 @@ class DevOpsChatbot:
         context = "\n".join(context_parts) if context_parts else "No specific context found."
         
         # Generate structured lesson
-        system_prompt = f"""You are an expert learning assistant specializing in Programming, DevOps, and AI topics. 
-        Create a well-structured educational lesson about {topic}.
+        # Create the full system message without template variables to avoid parsing issues
+        full_system_message = """You are an expert learning assistant specializing in Programming, DevOps, and AI topics. 
+        Create a well-structured educational lesson about the requested topic.
         
         Requirements:
         - Provide an in-depth lesson (7-10 paragraphs) with detailed explanations, examples, and best practices
@@ -242,16 +315,15 @@ class DevOpsChatbot:
         - End with actionable next steps or practice suggestions
         
         Context for reference:
-        {context}"""
+        """ + context
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("user", "Create a lesson about: {input}")
-        ])
+        # Create messages directly to avoid template parsing issues
+        messages_for_llm = [
+            {"role": "system", "content": full_system_message},
+            {"role": "user", "content": f"Create a lesson about: {messages[-1].content}"}
+        ]
         
-        response = await self.llm.ainvoke(
-            prompt.format_messages(input=messages[-1].content)
-        )
+        response = await self.llm.ainvoke(messages_for_llm)
         
         state["current_response"] = response.content
         return state
@@ -288,59 +360,69 @@ class DevOpsChatbot:
         
         context = "\n".join(context_parts) if context_parts else "No specific context found."
         
-        # Generate conversational response
-        system_prompt = f"""You are a helpful learning assistant focused on {topic}.
+        # Generate conversational response  
+        full_system_message = "You are a helpful learning assistant focused on " + topic + """.
         Use the provided context to give accurate and educational responses.
         Answer the user's question directly and provide practical insights.
-        Stay focused on {topic} and related concepts.
+        Stay focused on """ + topic + """ and related concepts.
         
         Context:
-        {context}"""
+        """ + context
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="history"),
-            ("user", "{input}")
-        ])
+        # Create messages directly to avoid template parsing issues
+        messages_for_llm = [
+            {"role": "system", "content": full_system_message}
+        ]
         
-        # Prepare message history
+        # Add message history
         history = messages[:-1] if len(messages) > 1 else []
+        for msg in history:
+            if isinstance(msg, HumanMessage):
+                messages_for_llm.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                messages_for_llm.append({"role": "assistant", "content": msg.content})
         
-        response = await self.llm.ainvoke(
-            prompt.format_messages(
-                history=history,
-                input=messages[-1].content
-            )
-        )
+        # Add current user message
+        messages_for_llm.append({"role": "user", "content": messages[-1].content})
+        
+        response = await self.llm.ainvoke(messages_for_llm)
         
         state["current_response"] = response.content
         return state
     
-    async def process_message(self, messages: List[Dict[str, str]], conversation_id: str) -> str:
+    async def process_message(self, messages: List[Dict[str, str]], conversation_id: str, conversation_topic: str = "") -> str:
         """Process a message through the graph"""
-        # Convert messages to BaseMessage objects
-        base_messages = []
-        for msg in messages:
-            if msg["role"] == "user":
-                base_messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                base_messages.append(AIMessage(content=msg["content"]))
-            elif msg["role"] == "system":
-                base_messages.append(SystemMessage(content=msg["content"]))
-        
-        # Create initial state
-        initial_state = ChatState(
-            messages=base_messages,
-            topic="",
-            rag_results=None,
-            web_results=None,
-            current_response=None,
-            is_first_message=False,
-            topic_category_valid=False
-        )
-        
-        # Run the graph
-        config = {"configurable": {"thread_id": conversation_id}}
-        result = await self.graph.ainvoke(initial_state, config)
-        
-        return result.get("current_response", "I'm sorry, I couldn't generate a response.")
+        try:
+            # Convert messages to BaseMessage objects
+            base_messages = []
+            for msg in messages:
+                if msg["role"] == "user":
+                    base_messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    base_messages.append(AIMessage(content=msg["content"]))
+                elif msg["role"] == "system":
+                    base_messages.append(SystemMessage(content=msg["content"]))
+            
+            # Create initial state
+            initial_state = ChatState(
+                messages=base_messages,
+                topic=conversation_topic,  # Use pre-validated topic from conversation
+                rag_results=None,
+                web_results=None,
+                current_response=None,
+                is_first_message=False,
+                topic_category_valid=True if conversation_topic else False,  # Pre-validated topics are valid
+                is_valid=True
+            )
+            
+            # Run the graph
+            config = {"configurable": {"thread_id": conversation_id}}
+            result = await self.graph.ainvoke(initial_state, config)
+            
+            response = result.get("current_response", "I'm sorry, I couldn't generate a response.")
+            logger.info(f"Successfully processed message for conversation {conversation_id}")
+            return response
+            
+        except Exception as e:
+            logger.exception(f"Error processing message for conversation {conversation_id}: {e}")
+            return "I'm sorry, I encountered an error while processing your message. Please try again."
