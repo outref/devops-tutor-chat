@@ -248,14 +248,20 @@ class DevOpsChatbot:
             return "response"
     
     async def _rag_search(self, state: ChatState) -> ChatState:
-        """Search for relevant documents in RAG using pure semantic search"""
+        """Search for relevant documents in RAG using semantic search with quality threshold"""
         query = state["messages"][-1].content
         
         try:
-            # Use pure semantic search without topic filtering
-            # This allows finding relevant content regardless of topic classification
-            results = await self.rag_service.search(query, topic=None)
+            # Use semantic search with similarity threshold to ensure quality
+            # Only return results that are actually relevant (similarity >= 0.7)
+            results = await self.rag_service.search(
+                query, 
+                topic=None, 
+                limit=5, 
+                similarity_threshold=0.7
+            )
             state["rag_results"] = results
+            logger.info(f"RAG search returned {len(results)} high-quality results for query: '{query[:50]}...'")
         except Exception as e:
             logger.error(f"RAG search error: {e}")
             state["rag_results"] = []
@@ -263,24 +269,72 @@ class DevOpsChatbot:
         return state
     
     async def _web_search(self, state: ChatState) -> ChatState:
-        """Search the web if RAG doesn't have enough information"""
+        """Search the web if RAG doesn't have sufficient high-quality information"""
         rag_results = state.get("rag_results", [])
+        query = state["messages"][-1].content
         
-        # Only search web if RAG results are insufficient
-        if not rag_results or len(rag_results) < 2:
+        # Determine if we need web search based on RAG result quality
+        should_search_web = self._should_use_web_search(rag_results, query)
+        
+        if should_search_web:
             topic = state.get("topic", "")
-            query = f"{topic} {state['messages'][-1].content}"
+            search_query = f"{topic} {query}"
             
             try:
-                results = await self.mcp_service.search(query)
+                logger.info(f"RAG results insufficient, triggering web search for: '{query[:50]}...'")
+                results = await self.mcp_service.search(search_query)
                 state["web_results"] = results
+                logger.info(f"Web search returned {len(results)} results")
             except Exception as e:
                 logger.error(f"Web search error: {e}")
                 state["web_results"] = []
         else:
+            logger.info(f"RAG results sufficient, skipping web search for: '{query[:50]}...'")
             state["web_results"] = []
         
         return state
+    
+    def _should_use_web_search(self, rag_results: List[Dict[str, Any]], query: str) -> bool:
+        """
+        Determine if web search should be used based on RAG result quality.
+        
+        Args:
+            rag_results: Results from RAG search
+            query: Original user query
+            
+        Returns:
+            True if web search should be used, False otherwise
+        """
+        # No RAG results means we definitely need web search
+        if not rag_results:
+            logger.info("No RAG results found, web search needed")
+            return True
+        
+        # Check if we have enough high-quality results
+        min_results_needed = 2
+        if len(rag_results) < min_results_needed:
+            logger.info(f"Only {len(rag_results)} high-quality RAG results found (need {min_results_needed}), web search needed")
+            return True
+        
+        # Check average similarity score
+        similarities = [result.get("similarity", 0) for result in rag_results]
+        avg_similarity = sum(similarities) / len(similarities) if similarities else 0
+        min_avg_similarity = 0.75
+        
+        if avg_similarity < min_avg_similarity:
+            logger.info(f"Average RAG similarity {avg_similarity:.3f} below threshold {min_avg_similarity}, web search needed")
+            return True
+        
+        # Check if the best result is high quality enough
+        best_similarity = max(similarities) if similarities else 0
+        min_best_similarity = 0.8
+        
+        if best_similarity < min_best_similarity:
+            logger.info(f"Best RAG similarity {best_similarity:.3f} below threshold {min_best_similarity}, web search needed")
+            return True
+        
+        logger.info(f"RAG results sufficient: {len(rag_results)} results, avg similarity {avg_similarity:.3f}, best similarity {best_similarity:.3f}")
+        return False
     
     async def _generate_lesson(self, state: ChatState) -> ChatState:
         """Generate a structured lesson for the first message"""

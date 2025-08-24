@@ -76,32 +76,46 @@ class RAGService:
                 await session.rollback()
                 raise
     
-    async def search(self, query: str, topic: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant documents using pure vector similarity"""
+    async def search(self, query: str, topic: str = None, limit: int = 5, similarity_threshold: float = 0.7) -> List[Dict[str, Any]]:
+        """Search for relevant documents using vector similarity with quality threshold"""
         async with AsyncSessionLocal() as session:
             try:
                 # Generate query embedding
                 query_embedding = await self.embeddings.aembed_query(query)
                 
-                # Build query - pure semantic search, no topic filtering
-                stmt = select(Document).order_by(
+                # Build query with cosine distance - get more results to filter by threshold
+                stmt = select(
+                    Document,
+                    Document.embedding.cosine_distance(query_embedding).label('distance')
+                ).order_by(
                     Document.embedding.cosine_distance(query_embedding)
-                ).limit(limit)
+                ).limit(limit * 2)  # Get extra results to filter by threshold
                 
                 # Execute query
                 result = await session.execute(stmt)
-                documents = result.scalars().all()
+                documents_with_distance = result.all()
                 
-                # Format results
+                # Format results and filter by similarity threshold
                 results = []
-                for doc in documents:
-                    results.append({
-                        "id": str(doc.id),
-                        "title": doc.title,
-                        "content": doc.content,
-                        "metadata": doc.document_metadata
-                    })
+                for doc, distance in documents_with_distance:
+                    # Convert cosine distance to similarity (cosine similarity = 1 - cosine distance)
+                    similarity = 1 - distance
+                    
+                    # Only include results above the similarity threshold
+                    if similarity >= similarity_threshold:
+                        results.append({
+                            "id": str(doc.id),
+                            "title": doc.title,
+                            "content": doc.content,
+                            "metadata": doc.document_metadata,
+                            "similarity": float(similarity)
+                        })
+                    
+                    # Stop if we have enough good results
+                    if len(results) >= limit:
+                        break
                 
+                logger.info(f"RAG search found {len(results)} high-quality results (similarity >= {similarity_threshold})")
                 return results
             except Exception as e:
                 logger.error(f"Error searching documents: {e}")
