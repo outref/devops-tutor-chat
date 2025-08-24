@@ -18,6 +18,7 @@ class ChatState(dict):
     rag_results: Optional[List[Dict[str, Any]]]
     web_results: Optional[List[Dict[str, Any]]]
     current_response: Optional[str]
+    search_concepts: Optional[str]
     is_first_message: bool
     topic_category_valid: bool
     is_valid: bool
@@ -247,41 +248,108 @@ class DevOpsChatbot:
         else:
             return "response"
     
+    async def _extract_search_concepts(self, query: str, topic: str = "") -> str:
+        """
+        Extract key concepts from conversational query for better RAG search.
+        
+        Args:
+            query: Raw user query with conversational elements
+            topic: Current conversation topic for context
+            
+        Returns:
+            Cleaned query with key concepts for semantic search
+        """
+        try:
+            # Create a focused prompt to extract search concepts
+            concept_prompt = ChatPromptTemplate.from_messages([
+                ("system", """Extract the key technical concepts and topics from the user's question that would be most relevant for searching technical documentation.
+
+Remove conversational elements like:
+- Politeness ("please", "can you", "could you")
+- Question words ("what is", "how does", "why do")  
+- Personal context ("I'm new to", "I heard that")
+- Filler words and unnecessary context
+
+Focus on:
+- Technical terms and concepts
+- Specific technologies, tools, frameworks
+- Key processes or methodologies
+- Important keywords
+
+Examples:
+Input: "Can you please explain how Docker containers work?"
+Output: "Docker containers architecture functionality"
+
+Input: "I'm new to programming. What is React and how do I use it?"
+Output: "React JavaScript library components usage"
+
+Input: "Could you help me understand CI/CD pipelines in Jenkins?"
+Output: "CI/CD pipelines Jenkins automation deployment"
+
+Return only the key concepts as a concise phrase (2-8 words max)."""),
+                ("user", f"Topic context: {topic}\nUser query: {query}")
+            ])
+            
+            response = await self.llm.ainvoke(
+                concept_prompt.format_messages()
+            )
+            
+            extracted_concepts = response.content.strip().strip("'\"")
+            logger.info(f"Extracted concepts: '{extracted_concepts}' from query: '{query[:50]}...'")
+            return extracted_concepts
+            
+        except Exception as e:
+            logger.error(f"Error extracting search concepts: {e}")
+            # Fallback to original query if extraction fails
+            return query
+    
     async def _rag_search(self, state: ChatState) -> ChatState:
-        """Search for relevant documents in RAG using semantic search with quality threshold"""
-        query = state["messages"][-1].content
+        """Search for relevant documents in RAG using preprocessed queries and quality threshold"""
+        raw_query = state["messages"][-1].content
+        topic = state.get("topic", "")
         
         try:
+            # Extract key concepts from conversational query for better semantic search
+            search_concepts = await self._extract_search_concepts(raw_query, topic)
+            
             # Use semantic search with similarity threshold to ensure quality
             # Only return results that are actually relevant (similarity >= 0.7)
             results = await self.rag_service.search(
-                query, 
+                search_concepts, 
                 topic=None, 
                 limit=5, 
                 similarity_threshold=0.7
             )
             state["rag_results"] = results
-            logger.info(f"RAG search returned {len(results)} high-quality results for query: '{query[:50]}...'")
+            logger.info(f"RAG search with concepts '{search_concepts}' returned {len(results)} high-quality results")
+            
+            # Store the extracted concepts for potential use in web search
+            state["search_concepts"] = search_concepts
+            
         except Exception as e:
             logger.error(f"RAG search error: {e}")
             state["rag_results"] = []
+            state["search_concepts"] = raw_query  # Fallback to raw query
         
         return state
     
     async def _web_search(self, state: ChatState) -> ChatState:
         """Search the web if RAG doesn't have sufficient high-quality information"""
         rag_results = state.get("rag_results", [])
-        query = state["messages"][-1].content
+        raw_query = state["messages"][-1].content
         
         # Determine if we need web search based on RAG result quality
-        should_search_web = self._should_use_web_search(rag_results, query)
+        should_search_web = self._should_use_web_search(rag_results, raw_query)
         
         if should_search_web:
             topic = state.get("topic", "")
-            search_query = f"{topic} {query}"
+            
+            # Use extracted concepts if available, otherwise use raw query
+            search_concepts = state.get("search_concepts", raw_query)
+            search_query = f"{topic} {search_concepts}"
             
             try:
-                logger.info(f"RAG results insufficient, triggering web search for: '{query[:50]}...'")
+                logger.info(f"RAG results insufficient, triggering web search with concepts: '{search_concepts[:50]}...'")
                 results = await self.mcp_service.search(search_query)
                 state["web_results"] = results
                 logger.info(f"Web search returned {len(results)} results")
@@ -289,7 +357,7 @@ class DevOpsChatbot:
                 logger.error(f"Web search error: {e}")
                 state["web_results"] = []
         else:
-            logger.info(f"RAG results sufficient, skipping web search for: '{query[:50]}...'")
+            logger.info(f"RAG results sufficient, skipping web search for: '{raw_query[:50]}...'")
             state["web_results"] = []
         
         return state
@@ -464,6 +532,7 @@ class DevOpsChatbot:
                 rag_results=None,
                 web_results=None,
                 current_response=None,
+                search_concepts=None,
                 is_first_message=False,
                 topic_category_valid=True if conversation_topic else False,  # Pre-validated topics are valid
                 is_valid=True
