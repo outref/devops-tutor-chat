@@ -39,8 +39,11 @@ A conversational AI assistant for learning DevOps topics, powered by LangChain/L
 
 2. **Set up environment variables**
    ```bash
-   cp .env.example .env
-   # Edit .env and add your OpenAI API key
+   # Create .env file with the following variables:
+   # OPENAI_API_KEY=your_openai_api_key_here
+   # POSTGRES_PASSWORD=your_secure_password_here
+   # SECRET_KEY=your_super_secure_secret_key_here
+   # LESSON_SIZE=medium  # Options: brief, medium, detailed, comprehensive
    ```
 
 3. **Start the application**

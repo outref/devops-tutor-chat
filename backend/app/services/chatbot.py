@@ -18,11 +18,13 @@ class ChatState(dict):
     rag_results: Optional[List[Dict[str, Any]]]
     web_results: Optional[List[Dict[str, Any]]]
     current_response: Optional[str]
+    is_first_message: bool
+    topic_category_valid: bool
 
 class DevOpsChatbot:
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4-turbo-preview",
+            model="gpt-5-mini",
             temperature=0.7,
             api_key=os.getenv("OPENAI_API_KEY")
         )
@@ -30,6 +32,15 @@ class DevOpsChatbot:
         self.rag_service = RAGService(self.embeddings)
         self.mcp_service = MCPWebSearchService()
         self.memory = MemorySaver()
+        
+        # Lesson configuration
+        self.lesson_size = os.getenv("LESSON_SIZE", "medium")
+        self.lesson_size_config = {
+            "brief": "Provide a concise lesson (2-3 paragraphs) covering the key concepts",
+            "medium": "Provide a comprehensive lesson (4-6 paragraphs) with examples and practical applications", 
+            "detailed": "Provide an in-depth lesson (7-10 paragraphs) with detailed explanations, examples, and best practices",
+            "comprehensive": "Provide an extensive lesson (10+ paragraphs) covering all aspects, advanced concepts, real-world scenarios, and implementation details"
+        }
         
         # Build the graph
         self.graph = self._build_graph()
@@ -39,24 +50,43 @@ class DevOpsChatbot:
         
         # Add nodes
         workflow.add_node("topic_extraction", self._extract_topic)
+        workflow.add_node("topic_category_validation", self._validate_topic_category)
         workflow.add_node("topic_validation", self._validate_topic)
         workflow.add_node("rag_search", self._rag_search)
         workflow.add_node("web_search", self._web_search)
+        workflow.add_node("generate_lesson", self._generate_lesson)
         workflow.add_node("generate_response", self._generate_response)
         
         # Add edges
         workflow.set_entry_point("topic_extraction")
-        workflow.add_edge("topic_extraction", "topic_validation")
+        workflow.add_edge("topic_extraction", "topic_category_validation")
+        workflow.add_conditional_edges(
+            "topic_category_validation",
+            self._route_after_category_validation,
+            {
+                "valid_first": "rag_search",  # First message with valid category
+                "valid_subsequent": "topic_validation",  # Subsequent messages
+                "invalid": "generate_response"  # Invalid category
+            }
+        )
         workflow.add_conditional_edges(
             "topic_validation",
-            self._route_after_validation,
+            self._route_after_topic_validation,
             {
                 "valid": "rag_search",
                 "invalid": "generate_response"
             }
         )
         workflow.add_edge("rag_search", "web_search")
-        workflow.add_edge("web_search", "generate_response")
+        workflow.add_conditional_edges(
+            "web_search",
+            self._route_after_web_search,
+            {
+                "lesson": "generate_lesson",
+                "response": "generate_response"
+            }
+        )
+        workflow.add_edge("generate_lesson", END)
         workflow.add_edge("generate_response", END)
         
         return workflow.compile(checkpointer=self.memory)
@@ -65,10 +95,13 @@ class DevOpsChatbot:
         """Extract or identify the current topic from the conversation"""
         messages = state["messages"]
         
+        # Determine if this is the first message
+        state["is_first_message"] = len(messages) == 1
+        
         # If this is the first message, extract topic
-        if len(messages) == 1:
+        if state["is_first_message"]:
             prompt = ChatPromptTemplate.from_messages([
-                ("system", "Generate a concise, descriptive topic name (2-4 words max) based on the user's DevOps question. Be specific and user-friendly. Examples:\n- 'Jenkins CI/CD' instead of 'cicd'\n- 'Docker Containers' instead of 'docker'\n- 'Kubernetes Deployment' instead of 'kubernetes'\n- 'AWS EC2 Setup' instead of 'aws'\n- 'Terraform Infrastructure' instead of 'terraform'\n- 'Ansible Automation' instead of 'ansible'\n- 'Monitoring & Alerting' instead of 'monitoring'\nRespond with just the topic name."),
+                ("system", "Generate a concise, descriptive topic name (2-4 words max) based on the user's question. Be specific and user-friendly. Examples:\n- 'Jenkins CI/CD' instead of 'cicd'\n- 'Docker Containers' instead of 'docker'\n- 'Kubernetes Deployment' instead of 'kubernetes'\n- 'AWS EC2 Setup' instead of 'aws'\n- 'Terraform Infrastructure' instead of 'terraform'\n- 'Ansible Automation' instead of 'ansible'\n- 'Monitoring & Alerting' instead of 'monitoring'\n- 'Python FastAPI' instead of 'python'\n- 'Machine Learning Basics' instead of 'ml'\nRespond with just the topic name."),
                 ("user", "{message}")
             ])
             
@@ -79,37 +112,77 @@ class DevOpsChatbot:
         
         return state
     
-    async def _validate_topic(self, state: ChatState) -> ChatState:
-        """Validate if the message is related to the current topic"""
+    async def _validate_topic_category(self, state: ChatState) -> ChatState:
+        """Validate if the topic is in allowed categories (Programming/DevOps/AI)"""
         messages = state["messages"]
         topic = state.get("topic", "")
         
-        # For first message, always valid if topic extracted
-        if len(messages) == 1 and topic:
-            return state
-        
-        # For subsequent messages, check if related to topic
-        if len(messages) > 1:
+        if state["is_first_message"]:
+            # Validate topic category for first message
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"Determine if the user's message is related to the DevOps topic '{topic}'. Respond with 'yes' or 'no' only."),
-                ("user", "{message}")
+                ("system", """Determine if the given topic/question is related to Programming, DevOps, or AI/Machine Learning.
+                
+                Programming topics include: web development, software engineering, databases, APIs, frameworks, languages (Python, JavaScript, Java, etc.), software architecture, etc.
+                
+                DevOps topics include: containerization (Docker, Kubernetes), CI/CD, cloud services (AWS, GCP, Azure), infrastructure as code, monitoring, automation, deployment, etc.
+                
+                AI/ML topics include: machine learning, artificial intelligence, data science, neural networks, deep learning, natural language processing, computer vision, etc.
+                
+                Respond with 'yes' if the topic falls into any of these categories, 'no' if it doesn't."""),
+                ("user", f"Topic: {topic}\nUser message: {messages[-1].content}")
             ])
             
             response = await self.llm.ainvoke(
-                prompt.format_messages(message=messages[-1].content)
+                prompt.format_messages()
             )
             
-            state["is_valid"] = response.content.strip().lower() == "yes"
+            state["topic_category_valid"] = response.content.strip().lower() == "yes"
         else:
-            state["is_valid"] = True
+            # For subsequent messages, category is already validated
+            state["topic_category_valid"] = True
             
         return state
+        
+    async def _validate_topic(self, state: ChatState) -> ChatState:
+        """Validate if the message is related to the current topic (for subsequent messages)"""
+        messages = state["messages"]
+        topic = state.get("topic", "")
+        
+        # This is only called for subsequent messages
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", f"Determine if the user's message is related to the topic '{topic}'. Respond with 'yes' or 'no' only."),
+            ("user", "{message}")
+        ])
+        
+        response = await self.llm.ainvoke(
+            prompt.format_messages(message=messages[-1].content)
+        )
+        
+        state["is_valid"] = response.content.strip().lower() == "yes"
+        return state
     
-    def _route_after_validation(self, state: ChatState) -> str:
-        """Route based on topic validation"""
+    def _route_after_category_validation(self, state: ChatState) -> str:
+        """Route based on topic category validation"""
+        if not state.get("topic_category_valid", False):
+            return "invalid"
+        
+        if state["is_first_message"]:
+            return "valid_first"
+        else:
+            return "valid_subsequent"
+    
+    def _route_after_topic_validation(self, state: ChatState) -> str:
+        """Route based on topic validation for subsequent messages"""
         if state.get("is_valid", True):
             return "valid"
         return "invalid"
+    
+    def _route_after_web_search(self, state: ChatState) -> str:
+        """Route to lesson generation for first message, regular response for others"""
+        if state["is_first_message"]:
+            return "lesson"
+        else:
+            return "response"
     
     async def _rag_search(self, state: ChatState) -> ChatState:
         """Search for relevant documents in RAG"""
@@ -145,15 +218,70 @@ class DevOpsChatbot:
         
         return state
     
+    async def _generate_lesson(self, state: ChatState) -> ChatState:
+        """Generate a structured lesson for the first message"""
+        messages = state["messages"]
+        topic = state.get("topic", "")
+        
+        # Build context from RAG and web results
+        context_parts = []
+        
+        if state.get("rag_results"):
+            context_parts.append("From our knowledge base:")
+            for result in state["rag_results"][:3]:
+                context_parts.append(f"- {result['content']}")
+        
+        if state.get("web_results"):
+            context_parts.append("\nFrom web search:")
+            for result in state["web_results"][:3]:
+                context_parts.append(f"- {result['content']}")
+        
+        context = "\n".join(context_parts) if context_parts else "No specific context found."
+        
+        # Get lesson size instruction
+        lesson_instruction = self.lesson_size_config.get(self.lesson_size, self.lesson_size_config["medium"])
+        
+        # Generate structured lesson
+        system_prompt = f"""You are an expert learning assistant specializing in Programming, DevOps, and AI topics. 
+        Create a well-structured educational lesson about {topic}.
+        
+        Requirements:
+        - {lesson_instruction}
+        - Use clear headings and structure (## for main sections)
+        - Include practical examples and code snippets where relevant
+        - Focus on hands-on learning and real-world applications
+        - End with actionable next steps or practice suggestions
+        
+        Context for reference:
+        {context}"""
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", "Create a lesson about: {input}")
+        ])
+        
+        response = await self.llm.ainvoke(
+            prompt.format_messages(input=messages[-1].content)
+        )
+        
+        state["current_response"] = response.content
+        return state
+    
     async def _generate_response(self, state: ChatState) -> ChatState:
-        """Generate the final response"""
+        """Generate regular response for subsequent messages or invalid topics"""
         messages = state["messages"]
         topic = state.get("topic", "")
         is_valid = state.get("is_valid", True)
+        topic_category_valid = state.get("topic_category_valid", True)
         
-        # Handle invalid topic
-        if not is_valid:
-            state["current_response"] = f"I'm focused on helping you learn about {topic}. Please ask questions related to this topic. If you'd like to explore a different DevOps topic, please start a new conversation."
+        # Handle invalid topic category (first message)
+        if state["is_first_message"] and not topic_category_valid:
+            state["current_response"] = "I'm sorry, but I can only help with topics related to Programming, DevOps, and AI/Machine Learning. Please ask a question about software development, infrastructure, automation, data science, or related technical topics."
+            return state
+        
+        # Handle invalid topic for subsequent messages
+        if not state["is_first_message"] and not is_valid:
+            state["current_response"] = f"I'm focused on helping you learn about {topic}. Please ask questions related to this topic. If you'd like to explore a different topic, please start a new conversation."
             return state
         
         # Build context from RAG and web results
@@ -171,11 +299,11 @@ class DevOpsChatbot:
         
         context = "\n".join(context_parts) if context_parts else "No specific context found."
         
-        # Generate response
-        system_prompt = f"""You are a helpful DevOps learning assistant focused on the topic of {topic}.
+        # Generate conversational response
+        system_prompt = f"""You are a helpful learning assistant focused on {topic}.
         Use the provided context to give accurate and educational responses.
-        If this is the first interaction, provide a brief lesson about {topic}.
-        Always stay focused on {topic} and related DevOps concepts.
+        Answer the user's question directly and provide practical insights.
+        Stay focused on {topic} and related concepts.
         
         Context:
         {context}"""
@@ -217,7 +345,9 @@ class DevOpsChatbot:
             topic="",
             rag_results=None,
             web_results=None,
-            current_response=None
+            current_response=None,
+            is_first_message=False,
+            topic_category_valid=False
         )
         
         # Run the graph
