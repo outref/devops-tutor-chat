@@ -1,13 +1,14 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
-import os
-from dotenv import load_dotenv
-from app.routers import chat, conversations, auth
-from app.services.database import engine, Base
 import logging
 import traceback
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.core.config import settings
+from app.core.database import Base, engine
+from app.routers import auth, chat, conversations
 
 # Configure logging with detailed format
 logging.basicConfig(
@@ -16,9 +17,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,16 +32,17 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="DevOps Chatbot API",
-    description="A chatbot for learning DevOps topics with RAG and MCP integration",
-    version="1.0.0",
+    title=settings.app_name,
+    description=settings.description,
+    version=settings.app_version,
+    debug=settings.debug,
     lifespan=lifespan
 )
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://localhost:3000"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

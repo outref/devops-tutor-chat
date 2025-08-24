@@ -10,7 +10,7 @@ import sys
 sys.path.append('..')
 
 from app.services.rag_service import RAGService
-from app.services.database import engine, Base, AsyncSessionLocal
+from app.core.database import engine, Base, AsyncSessionLocal
 from app.models.document import Document
 import logging
 

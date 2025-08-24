@@ -1,31 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
-from sqlalchemy.orm import selectinload
-from typing import List
-from pydantic import BaseModel
 import uuid
 from datetime import datetime, timezone
+from typing import List
 
-from app.services.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.crud.conversation import (
+    delete_conversation,
+    get_conversation_with_messages,
+    get_user_conversations,
+)
 from app.models.conversation import Conversation
 from app.models.user import User
 from app.routers.auth import get_current_user
+from app.schemas.conversation import ConversationResponse
 
 router = APIRouter()
-
-class ConversationResponse(BaseModel):
-    id: str
-    user_id: str
-    topic: str
-    created_at: datetime
-    updated_at: datetime
-    message_count: int = 0
-
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.isoformat()
-        }
 
 @router.get("/", response_model=List[ConversationResponse])
 async def get_conversations(
@@ -35,12 +26,7 @@ async def get_conversations(
 ):
     """Get user's conversations"""
     try:
-        stmt = select(Conversation).where(
-            Conversation.user_id == str(current_user.id)
-        ).options(selectinload(Conversation.messages)).order_by(desc(Conversation.updated_at)).limit(limit)
-        
-        result = await db.execute(stmt)
-        conversations = result.scalars().all()
+        conversations = await get_user_conversations(db, str(current_user.id), limit)
         
         responses = []
         for conv in conversations:
@@ -68,12 +54,7 @@ async def get_conversation(
 ):
     """Get a specific conversation"""
     try:
-        stmt = select(Conversation).where(
-            Conversation.id == uuid.UUID(conversation_id)
-        ).options(selectinload(Conversation.messages))
-        
-        result = await db.execute(stmt)
-        conversation = result.scalar_one_or_none()
+        conversation = await get_conversation_with_messages(db, uuid.UUID(conversation_id))
         
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -99,18 +80,12 @@ async def delete_conversation(
 ):
     """Delete a conversation"""
     try:
-        stmt = select(Conversation).where(
-            Conversation.id == uuid.UUID(conversation_id)
-        )
-        
-        result = await db.execute(stmt)
-        conversation = result.scalar_one_or_none()
+        conversation = await get_conversation_with_messages(db, uuid.UUID(conversation_id))
         
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        await db.delete(conversation)
-        await db.commit()
+        await delete_conversation(db, conversation)
         
         return {"message": "Conversation deleted successfully"}
     except HTTPException:

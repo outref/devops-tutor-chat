@@ -6,7 +6,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import numpy as np
 from app.models.document import Document
-from app.services.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -120,25 +120,4 @@ class RAGService:
             except Exception as e:
                 logger.error(f"Error searching documents: {e}")
                 return []
-    
-    async def delete_by_source(self, source: str) -> int:
-        """Delete all documents from a specific source"""
-        async with AsyncSessionLocal() as session:
-            try:
-                # Use JSON query to find documents by source in metadata
-                stmt = select(Document).where(
-                    func.json_extract_path_text(Document.document_metadata, 'source') == source
-                )
-                result = await session.execute(stmt)
-                documents = result.scalars().all()
-                
-                count = len(documents)
-                for doc in documents:
-                    await session.delete(doc)
-                
-                await session.commit()
-                return count
-            except Exception as e:
-                logger.error(f"Error deleting documents: {e}")
-                await session.rollback()
-                raise
+

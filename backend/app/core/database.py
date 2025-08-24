@@ -1,14 +1,16 @@
+"""
+Database configuration and setup
+"""
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://chatbot:chatbot123@postgres:5432/devops_chatbot")
+from app.core.config import settings
 
 # Create async engine
 engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
+    settings.database_url,
+    echo=settings.debug,
     future=True
 )
 
@@ -22,8 +24,10 @@ AsyncSessionLocal = sessionmaker(
 # Create declarative base
 Base = declarative_base()
 
+
 # Dependency to get database session
-async def get_db():
+async def get_db() -> AsyncSession:
+    """Get database session"""
     async with AsyncSessionLocal() as session:
         try:
             yield session

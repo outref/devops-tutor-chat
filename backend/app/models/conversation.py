@@ -4,7 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
-from app.services.database import Base
+from app.core.database import Base
 
 class MessageRole(str, enum.Enum):
     USER = "user"

@@ -1,57 +1,37 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
-import uuid
-import logging
 import json
+import logging
+import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from app.services.database import get_db
-from app.services.chatbot import DevOpsChatbot
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.crud.conversation import (
+    create_conversation,
+    get_conversation_by_id,
+    update_conversation_timestamp,
+)
+from app.crud.message import create_message, get_messages_by_conversation, get_message_count
 from app.models.conversation import Conversation, Message, MessageRole
 from app.models.user import User
 from app.routers.auth import get_current_user
+from app.schemas.chat import (
+    ChatRequest,
+    ChatResponse,
+    MessageResponse,
+    QuizState,
+    StartQuizRequest,
+)
+from app.services.chatbot import DevOpsChatbot
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Initialize chatbot
 chatbot = DevOpsChatbot()
-
-# Pydantic models
-class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=5000)
-    conversation_id: Optional[str] = Field(None, description="Existing conversation ID")
-    is_quiz_mode: bool = Field(False, description="Whether this is a quiz interaction")
-
-class QuizState(BaseModel):
-    quiz_questions: Optional[List[Dict[str, Any]]] = None
-    current_quiz_index: Optional[int] = None
-    quiz_scores: Optional[List[Dict[str, Any]]] = None
-    used_quiz_questions: Optional[List[str]] = []
-    is_active: bool = False
-
-class ChatResponse(BaseModel):
-    response: str
-    conversation_id: str
-    topic: str
-    quiz_state: Optional[QuizState] = None
-
-class StartQuizRequest(BaseModel):
-    conversation_id: str = Field(..., description="Conversation ID to start quiz for")
-
-class MessageResponse(BaseModel):
-    id: str
-    role: str
-    content: str
-    created_at: datetime
-
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.isoformat()
-        }
 
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
@@ -64,11 +44,7 @@ async def send_message(
         # Get or create conversation
         if request.conversation_id:
             # Fetch existing conversation
-            stmt = select(Conversation).where(
-                Conversation.id == uuid.UUID(request.conversation_id)
-            )
-            result = await db.execute(stmt)
-            conversation = result.scalar_one_or_none()
+            conversation = await get_conversation_by_id(db, uuid.UUID(request.conversation_id))
             
             if not conversation:
                 raise HTTPException(status_code=404, detail="Conversation not found")
@@ -84,29 +60,18 @@ async def send_message(
                 )
             
             # Create new conversation with validated topic
-            conversation = Conversation(
-                user_id=str(current_user.id),
-                topic=extracted_topic
-            )
-            db.add(conversation)
-            await db.commit()
-            await db.refresh(conversation)
+            conversation = await create_conversation(db, str(current_user.id), extracted_topic)
         
         # Add user message
-        user_message = Message(
-            conversation_id=conversation.id,
-            role=MessageRole.USER.value,
-            content=request.message
+        await create_message(
+            db,
+            conversation.id,
+            MessageRole.USER,
+            request.message
         )
-        db.add(user_message)
-        await db.commit()
         
         # Get all messages for this conversation
-        stmt = select(Message).where(
-            Message.conversation_id == conversation.id
-        ).order_by(Message.created_at)
-        result = await db.execute(stmt)
-        messages = result.scalars().all()
+        messages = await get_messages_by_conversation(db, conversation.id)
         
         # Convert to format expected by chatbot
         message_dicts = [
@@ -142,21 +107,20 @@ async def send_message(
         new_quiz_state = result.get("quiz_state")
         
         # Update conversation timestamp
-        conversation.updated_at = func.now()
+        await update_conversation_timestamp(db, conversation)
         
         # Add assistant response with quiz state if present
         message_metadata = {}
         if new_quiz_state:
             message_metadata["quiz_state"] = new_quiz_state
         
-        assistant_message = Message(
-            conversation_id=conversation.id,
-            role=MessageRole.ASSISTANT.value,
-            content=response_content,
-            message_metadata=message_metadata
+        await create_message(
+            db,
+            conversation.id,
+            MessageRole.ASSISTANT,
+            response_content,
+            message_metadata
         )
-        db.add(assistant_message)
-        await db.commit()
         
         # Build response
         response = ChatResponse(
@@ -185,12 +149,7 @@ async def get_messages(
 ):
     """Get all messages for a conversation"""
     try:
-        stmt = select(Message).where(
-            Message.conversation_id == uuid.UUID(conversation_id)
-        ).order_by(Message.created_at)
-        
-        result = await db.execute(stmt)
-        messages = result.scalars().all()
+        messages = await get_messages_by_conversation(db, uuid.UUID(conversation_id))
         
         return [
             MessageResponse(
@@ -214,22 +173,17 @@ async def start_quiz(
     """Start a quiz for the current conversation"""
     try:
         # Fetch conversation
-        stmt = select(Conversation).where(
-            Conversation.id == uuid.UUID(request.conversation_id),
-            Conversation.user_id == str(current_user.id)
-        )
-        result = await db.execute(stmt)
-        conversation = result.scalar_one_or_none()
+        conversation = await get_conversation_by_id(db, uuid.UUID(request.conversation_id))
+        
+        # Verify ownership
+        if conversation and conversation.user_id != str(current_user.id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
         
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
         # Check if conversation has at least one message exchange
-        stmt = select(func.count(Message.id)).where(
-            Message.conversation_id == conversation.id
-        )
-        result = await db.execute(stmt)
-        message_count = result.scalar()
+        message_count = await get_message_count(db, conversation.id)
         
         if message_count < 2:  # At least one user message and one assistant response
             raise HTTPException(
@@ -238,11 +192,7 @@ async def start_quiz(
             )
         
         # Get all messages for context
-        stmt = select(Message).where(
-            Message.conversation_id == conversation.id
-        ).order_by(Message.created_at)
-        result = await db.execute(stmt)
-        messages = result.scalars().all()
+        messages = await get_messages_by_conversation(db, conversation.id)
         
         # Convert to format expected by chatbot
         message_dicts = [
@@ -281,25 +231,24 @@ async def start_quiz(
         quiz_state = result.get("quiz_state")
         
         # Store the quiz initiation as a system message
-        quiz_message = Message(
-            conversation_id=conversation.id,
-            role=MessageRole.SYSTEM.value,
-            content="Quiz started",
-            message_metadata={"quiz_state": quiz_state} if quiz_state else {}
+        await create_message(
+            db,
+            conversation.id,
+            MessageRole.SYSTEM,
+            "Quiz started",
+            {"quiz_state": quiz_state} if quiz_state else {}
         )
-        db.add(quiz_message)
         
         # Store the first quiz question as assistant message
-        assistant_message = Message(
-            conversation_id=conversation.id,
-            role=MessageRole.ASSISTANT.value,
-            content=response_content,
-            message_metadata={"quiz_state": quiz_state} if quiz_state else {}
+        await create_message(
+            db,
+            conversation.id,
+            MessageRole.ASSISTANT,
+            response_content,
+            {"quiz_state": quiz_state} if quiz_state else {}
         )
-        db.add(assistant_message)
         
-        conversation.updated_at = func.now()
-        await db.commit()
+        await update_conversation_timestamp(db, conversation)
         
         response = ChatResponse(
             response=response_content,

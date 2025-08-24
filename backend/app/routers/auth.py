@@ -1,47 +1,17 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from pydantic import BaseModel, Field
-from passlib.context import CryptContext
-import secrets
 
-from app.services.database import get_db
+from app.core.database import get_db
+from app.core.security import verify_password
+from app.crud.user import authenticate_user, create_user, get_user_by_username
 from app.models.user import User
+from app.schemas.user import UserRegister, UserResponse
 
 router = APIRouter()
 security = HTTPBasic()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Pydantic models
-class UserRegister(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=4, max_length=100)
-
-class UserResponse(BaseModel):
-    id: int
-    username: str
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password: str) -> str:
-    """Hash a password"""
-    return pwd_context.hash(password)
-
-async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
-    """Get user by username"""
-    stmt = select(User).where(User.username == username)
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-async def authenticate_user(db: AsyncSession, username: str, password: str) -> User | None:
-    """Authenticate a user"""
-    user = await get_user_by_username(db, username)
-    if not user or not verify_password(password, user.hashed_password):
-        return None
-    return user
 
 async def get_current_user(
     credentials: HTTPBasicCredentials = Depends(security),
@@ -72,15 +42,7 @@ async def register(
         )
     
     # Create new user
-    hashed_password = get_password_hash(user_data.password)
-    user = User(
-        username=user_data.username,
-        hashed_password=hashed_password
-    )
-    
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    user = await create_user(db, user_data)
     
     return UserResponse(id=user.id, username=user.username)
 
