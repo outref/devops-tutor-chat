@@ -1,16 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 import uuid
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 
 from app.services.database import get_db
 from app.services.chatbot import DevOpsChatbot
 from app.models.conversation import Conversation, Message, MessageRole
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Initialize chatbot
 chatbot = DevOpsChatbot()
@@ -31,6 +33,11 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     created_at: datetime
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.isoformat()
+        }
 
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
@@ -88,12 +95,29 @@ async def send_message(
             str(conversation.id)
         )
         
-        # Extract topic from first response if needed
+        # Extract topic from chatbot's state if this is the first message
         if conversation.topic == "pending" and len(messages) == 1:
-            # Extract topic from the chatbot's state
-            topic = "general"  # Default topic
-            # You can enhance this by extracting from the chatbot's state
-            conversation.topic = topic
+            # Get the topic from the chatbot's internal state
+            config = {"configurable": {"thread_id": str(conversation.id)}}
+            try:
+                # Access the chatbot's memory to get the extracted topic
+                checkpointer = chatbot.memory
+                checkpoint = await checkpointer.aget(config)
+                if checkpoint and "topic" in checkpoint.get("channel_values", {}):
+                    extracted_topic = checkpoint["channel_values"]["topic"]
+                    if extracted_topic and extracted_topic.strip():
+                        conversation.topic = extracted_topic.strip()
+                    else:
+                        conversation.topic = "General"
+                else:
+                    conversation.topic = "General"
+            except Exception as e:
+                # Fallback to general if we can't extract the topic
+                logger.error(f"Error extracting topic from chatbot state: {e}")
+                conversation.topic = "General"
+        
+        # Update conversation timestamp
+        conversation.updated_at = func.now()
         
         # Add assistant response
         assistant_message = Message(

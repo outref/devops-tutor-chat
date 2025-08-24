@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from typing import List
 from pydantic import BaseModel
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.services.database import get_db
 from app.models.conversation import Conversation
@@ -19,6 +19,11 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     message_count: int = 0
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.isoformat()
+        }
 
 @router.get("/", response_model=List[ConversationResponse])
 async def get_conversations(

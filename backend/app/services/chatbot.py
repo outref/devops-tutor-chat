@@ -68,14 +68,14 @@ class DevOpsChatbot:
         # If this is the first message, extract topic
         if len(messages) == 1:
             prompt = ChatPromptTemplate.from_messages([
-                ("system", "Extract the main DevOps topic from the user's message. Topics include: kubernetes, docker, cicd, aws, gcloud, terraform, ansible, monitoring, etc. Respond with just the topic name."),
+                ("system", "Generate a concise, descriptive topic name (2-4 words max) based on the user's DevOps question. Be specific and user-friendly. Examples:\n- 'Jenkins CI/CD' instead of 'cicd'\n- 'Docker Containers' instead of 'docker'\n- 'Kubernetes Deployment' instead of 'kubernetes'\n- 'AWS EC2 Setup' instead of 'aws'\n- 'Terraform Infrastructure' instead of 'terraform'\n- 'Ansible Automation' instead of 'ansible'\n- 'Monitoring & Alerting' instead of 'monitoring'\nRespond with just the topic name."),
                 ("user", "{message}")
             ])
             
             response = await self.llm.ainvoke(
                 prompt.format_messages(message=messages[-1].content)
             )
-            state["topic"] = response.content.strip().lower()
+            state["topic"] = response.content.strip()
         
         return state
     
