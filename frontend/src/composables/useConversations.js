@@ -1,9 +1,10 @@
 import { ref } from 'vue'
-import axios from 'axios'
+import { useAuth } from './useAuth.js'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export const useConversations = () => {
+  const { getAuthHeaders } = useAuth()
   const conversations = ref([])
   const isLoading = ref(false)
   
@@ -11,14 +12,18 @@ export const useConversations = () => {
     isLoading.value = true
     
     try {
-      const response = await axios.get(`${API_URL}/api/conversations/`, {
-        params: {
-          user_id: 'default_user',
-          limit: 20
+      const response = await fetch(`${API_URL}/api/conversations/?limit=20`, {
+        headers: {
+          ...getAuthHeaders()
         }
       })
       
-      conversations.value = response.data
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to load conversations')
+      }
+      
+      conversations.value = await response.json()
     } catch (error) {
       console.error('Error loading conversations:', error)
       conversations.value = []
@@ -29,7 +34,18 @@ export const useConversations = () => {
   
   const deleteConversation = async (conversationId) => {
     try {
-      await axios.delete(`${API_URL}/api/conversations/${conversationId}`)
+      const response = await fetch(`${API_URL}/api/conversations/${conversationId}`, {
+        method: 'DELETE',
+        headers: {
+          ...getAuthHeaders()
+        }
+      })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to delete conversation')
+      }
+      
       // Remove from local state
       conversations.value = conversations.value.filter(c => c.id !== conversationId)
     } catch (error) {

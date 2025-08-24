@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from app.services.database import get_db
 from app.services.chatbot import DevOpsChatbot
 from app.models.conversation import Conversation, Message, MessageRole
+from app.models.user import User
+from app.routers.auth import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -21,7 +23,6 @@ chatbot = DevOpsChatbot()
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
     conversation_id: Optional[str] = Field(None, description="Existing conversation ID")
-    user_id: str = Field(default="default_user")
 
 class ChatResponse(BaseModel):
     response: str
@@ -42,6 +43,7 @@ class MessageResponse(BaseModel):
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Send a message to the chatbot"""
@@ -60,7 +62,7 @@ async def send_message(
         else:
             # Create new conversation (topic will be set after first message)
             conversation = Conversation(
-                user_id=request.user_id,
+                user_id=str(current_user.id),
                 topic="pending"
             )
             db.add(conversation)
@@ -143,6 +145,7 @@ async def send_message(
 @router.get("/messages/{conversation_id}", response_model=List[MessageResponse])
 async def get_messages(
     conversation_id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all messages for a conversation"""

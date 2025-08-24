@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
-from app.routers import chat, conversations
+from app.routers import chat, conversations, auth
 from app.services.database import engine, Base
 import logging
 
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 

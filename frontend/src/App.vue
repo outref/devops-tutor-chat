@@ -1,5 +1,12 @@
 <template>
-  <div class="flex h-screen bg-kk-bg-dark">
+  <!-- Authentication required -->
+  <AuthForm
+    v-if="!isAuthenticated"
+    @authenticated="handleAuthenticated"
+  />
+  
+  <!-- Main app (authenticated) -->
+  <div v-else class="flex h-screen bg-kk-bg-dark">
     <!-- Sidebar -->
     <ConversationSidebar 
       :conversations="conversations"
@@ -15,6 +22,7 @@
       <ChatHeader 
         :topic="currentTopic"
         :isNewConversation="!currentConversationId"
+        @logout="handleLogout"
       />
       
       <!-- Messages area -->
@@ -40,12 +48,15 @@ import ConversationSidebar from './components/ConversationSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import MessageList from './components/MessageList.vue'
 import ChatInput from './components/ChatInput.vue'
+import AuthForm from './components/AuthForm.vue'
 import { useChat } from './composables/useChat.js'
 import { useConversations } from './composables/useConversations.js'
+import { useAuth } from './composables/useAuth.js'
 
 // Composables
 const { sendMessage, getMessages, isLoading } = useChat()
 const { conversations, loadConversations, deleteConversation } = useConversations()
+const { isAuthenticated, checkAuth } = useAuth()
 
 // State
 const messages = ref([])
@@ -147,13 +158,30 @@ const handleDeleteConversation = async (conversationId) => {
   }
 }
 
-// Lifecycle
-onMounted(async () => {
+const handleAuthenticated = async () => {
+  // Load conversations after authentication
   await loadConversations()
   
   // If there are conversations, load the most recent one
   if (conversations.value.length > 0) {
     await handleSelectConversation(conversations.value[0].id)
+  }
+}
+
+const handleLogout = () => {
+  // Clear current state
+  currentConversationId.value = null
+  currentTopic.value = ''
+  messages.value = []
+  conversations.value = []
+}
+
+// Lifecycle
+onMounted(async () => {
+  // Check if user is already authenticated
+  const isAuth = await checkAuth()
+  if (isAuth) {
+    await handleAuthenticated()
   }
 })
 </script>

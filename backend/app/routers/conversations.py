@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 
 from app.services.database import get_db
 from app.models.conversation import Conversation
+from app.models.user import User
+from app.routers.auth import get_current_user
 
 router = APIRouter()
 
@@ -27,14 +29,14 @@ class ConversationResponse(BaseModel):
 
 @router.get("/", response_model=List[ConversationResponse])
 async def get_conversations(
-    user_id: str = "default_user",
+    current_user: User = Depends(get_current_user),
     limit: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
     """Get user's conversations"""
     try:
         stmt = select(Conversation).where(
-            Conversation.user_id == user_id
+            Conversation.user_id == str(current_user.id)
         ).options(selectinload(Conversation.messages)).order_by(desc(Conversation.updated_at)).limit(limit)
         
         result = await db.execute(stmt)
@@ -61,6 +63,7 @@ async def get_conversations(
 @router.get("/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
     conversation_id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific conversation"""
@@ -91,6 +94,7 @@ async def get_conversation(
 @router.delete("/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a conversation"""
