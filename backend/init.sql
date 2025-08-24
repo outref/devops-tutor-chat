@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
-    topic VARCHAR(255) NOT NULL,
     embedding vector(1536),
     document_metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -34,7 +33,6 @@ CREATE TABLE IF NOT EXISTS documents (
 -- Create indexes
 CREATE INDEX idx_conversations_user_id ON conversations(user_id);
 CREATE INDEX idx_messages_conversation_id ON messages(conversation_id);
-CREATE INDEX idx_documents_topic ON documents(topic);
 CREATE INDEX idx_documents_embedding ON documents USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Create function to update updated_at timestamp

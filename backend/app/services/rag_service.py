@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from pgvector.sqlalchemy import Vector
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -32,7 +32,6 @@ class RAGService:
                 document = Document(
                     title=title,
                     content=content,
-                    topic=topic,
                     embedding=embedding,
                     document_metadata=metadata or {}
                 )
@@ -63,7 +62,6 @@ class RAGService:
                         document = Document(
                             title=f"{doc_data['title']} - Part {i+1}" if len(chunks) > 1 else doc_data['title'],
                             content=chunk,
-                            topic=doc_data['topic'],
                             embedding=embedding,
                             document_metadata=doc_data.get('metadata', {})
                         )
@@ -79,21 +77,14 @@ class RAGService:
                 raise
     
     async def search(self, query: str, topic: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant documents using vector similarity"""
+        """Search for relevant documents using pure vector similarity"""
         async with AsyncSessionLocal() as session:
             try:
                 # Generate query embedding
                 query_embedding = await self.embeddings.aembed_query(query)
                 
-                # Build query
-                stmt = select(Document)
-                
-                # Filter by topic if provided
-                if topic:
-                    stmt = stmt.where(Document.topic == topic)
-                
-                # Order by similarity
-                stmt = stmt.order_by(
+                # Build query - pure semantic search, no topic filtering
+                stmt = select(Document).order_by(
                     Document.embedding.cosine_distance(query_embedding)
                 ).limit(limit)
                 
@@ -108,7 +99,6 @@ class RAGService:
                         "id": str(doc.id),
                         "title": doc.title,
                         "content": doc.content,
-                        "topic": doc.topic,
                         "metadata": doc.document_metadata
                     })
                 
@@ -117,11 +107,14 @@ class RAGService:
                 logger.error(f"Error searching documents: {e}")
                 return []
     
-    async def delete_by_topic(self, topic: str) -> int:
-        """Delete all documents for a specific topic"""
+    async def delete_by_source(self, source: str) -> int:
+        """Delete all documents from a specific source"""
         async with AsyncSessionLocal() as session:
             try:
-                stmt = select(Document).where(Document.topic == topic)
+                # Use JSON query to find documents by source in metadata
+                stmt = select(Document).where(
+                    func.json_extract_path_text(Document.document_metadata, 'source') == source
+                )
                 result = await session.execute(stmt)
                 documents = result.scalars().all()
                 

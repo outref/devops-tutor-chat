@@ -24,7 +24,7 @@ class ChatState(dict):
 class DevOpsChatbot:
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-5-mini",
+            model="gpt-4.1-mini",
             temperature=0.7,
             api_key=os.getenv("OPENAI_API_KEY")
         )
@@ -32,15 +32,6 @@ class DevOpsChatbot:
         self.rag_service = RAGService(self.embeddings)
         self.mcp_service = MCPWebSearchService()
         self.memory = MemorySaver()
-        
-        # Lesson configuration
-        self.lesson_size = os.getenv("LESSON_SIZE", "medium")
-        self.lesson_size_config = {
-            "brief": "Provide a concise lesson (2-3 paragraphs) covering the key concepts",
-            "medium": "Provide a comprehensive lesson (4-6 paragraphs) with examples and practical applications", 
-            "detailed": "Provide an in-depth lesson (7-10 paragraphs) with detailed explanations, examples, and best practices",
-            "comprehensive": "Provide an extensive lesson (10+ paragraphs) covering all aspects, advanced concepts, real-world scenarios, and implementation details"
-        }
         
         # Build the graph
         self.graph = self._build_graph()
@@ -185,12 +176,13 @@ class DevOpsChatbot:
             return "response"
     
     async def _rag_search(self, state: ChatState) -> ChatState:
-        """Search for relevant documents in RAG"""
-        topic = state.get("topic", "")
+        """Search for relevant documents in RAG using pure semantic search"""
         query = state["messages"][-1].content
         
         try:
-            results = await self.rag_service.search(query, topic)
+            # Use pure semantic search without topic filtering
+            # This allows finding relevant content regardless of topic classification
+            results = await self.rag_service.search(query, topic=None)
             state["rag_results"] = results
         except Exception as e:
             logger.error(f"RAG search error: {e}")
@@ -238,15 +230,12 @@ class DevOpsChatbot:
         
         context = "\n".join(context_parts) if context_parts else "No specific context found."
         
-        # Get lesson size instruction
-        lesson_instruction = self.lesson_size_config.get(self.lesson_size, self.lesson_size_config["medium"])
-        
         # Generate structured lesson
         system_prompt = f"""You are an expert learning assistant specializing in Programming, DevOps, and AI topics. 
         Create a well-structured educational lesson about {topic}.
         
         Requirements:
-        - {lesson_instruction}
+        - Provide an in-depth lesson (7-10 paragraphs) with detailed explanations, examples, and best practices
         - Use clear headings and structure (## for main sections)
         - Include practical examples and code snippets where relevant
         - Focus on hands-on learning and real-world applications

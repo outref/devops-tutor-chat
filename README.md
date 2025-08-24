@@ -43,7 +43,6 @@ A conversational AI assistant for learning DevOps topics, powered by LangChain/L
    # OPENAI_API_KEY=your_openai_api_key_here
    # POSTGRES_PASSWORD=your_secure_password_here
    # SECRET_KEY=your_super_secure_secret_key_here
-   # LESSON_SIZE=medium  # Options: brief, medium, detailed, comprehensive
    ```
 
 3. **Start the application**
@@ -51,9 +50,16 @@ A conversational AI assistant for learning DevOps topics, powered by LangChain/L
    docker-compose up -d
    ```
 
-4. **Seed the database with DevOps content** (optional but recommended)
+4. **Seed the database with RAG content** (optional but recommended)
    ```bash
-   docker-compose exec backend python seed_data.py
+   # Enter backend container
+   docker-compose exec backend bash
+   cd rag-data
+   ./seed_rag.sh
+   
+   # Or from host machine (if backend is built)
+   cd backend/rag-data
+   ./seed_rag.sh
    ```
 
 5. **Access the application**
@@ -140,9 +146,27 @@ npm install
 npm run dev
 ```
 
-### Adding DevOps Content
+### Adding RAG Content
 
-Edit `backend/seed_data.py` to add more DevOps topics and content to the RAG knowledge base.
+Use the RAG seeding script to populate with comprehensive content:
+
+```bash
+cd backend/rag-data
+./seed_rag.sh  # Exits if database has data
+```
+
+**Options:**
+```bash
+./seed_rag.sh                     # Exits if database has data
+./seed_rag.sh --force             # Add alongside existing data
+./seed_rag.sh custom.csv          # Use custom CSV file
+```
+
+**Features:**
+- Simple and fast processing
+- Batch processing for large datasets  
+- Pure semantic search (no topic filtering)
+- Exits cleanly if database has existing data
 
 ## Web Search Integration
 

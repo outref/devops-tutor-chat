@@ -11,7 +11,6 @@ class Document(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String(255), nullable=False)
     content = Column(String, nullable=False)
-    topic = Column(String(255), nullable=False, index=True)
     embedding = Column(Vector(1536))  # OpenAI embeddings dimension
     document_metadata = Column(JSON, default={})
     created_at = Column(DateTime, server_default=func.now())
