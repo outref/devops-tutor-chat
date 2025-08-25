@@ -65,14 +65,6 @@ results = await rag_service.search(
 4. Content extraction and relevance filtering
 5. Integration with conversation context
 
-**MCP Configuration:**
-```yaml
-environment:
-  MAX_CONTENT_LENGTH: "15000"
-  RELEVANCE_THRESHOLD: "0.3"
-  BROWSER_HEADLESS: "true"
-```
-
 ### Quiz Generation System
 
 **Smart Quiz Features:**
@@ -104,7 +96,7 @@ quiz_state = {
 **Backend:**
 - **FastAPI** with async/await patterns
 - **LangChain** + **LangGraph** for AI workflow orchestration
-- **OpenAI GPT-4o-mini** for language processing
+- **OpenAI GPT-4.1-mini** for language processing
 - **PostgreSQL** + **pgvector** for vector search
 - **SQLAlchemy 2.0** with async support
 
@@ -122,7 +114,7 @@ quiz_state = {
 
 ```bash
 # Clone and setup environment
-cp .env.example .env  # Add your OPENAI_API_KEY
+cp .env-example .env
 
 # Start all services
 docker compose up --build
