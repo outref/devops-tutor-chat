@@ -57,6 +57,7 @@ services:
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-devops-chatbot}
       MCP_SERVER_URL: http://web-search-mcp:3000
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
     volumes:
       - ./data:/app/data
       - ./backend/app:/app/app
