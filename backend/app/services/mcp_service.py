@@ -47,68 +47,11 @@ class MCPWebSearchService:
                 
         except Exception as e:
             logger.error(f"Error during MCP search: {e}")
-            # Try lightweight search as fallback
-            return await self.search_summaries(query, max_results)
-    
-    async def search_summaries(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-        """
-        Get lightweight search summaries without full content.
-        
-        Args:
-            query: Search query
-            max_results: Number of results to return
-            
-        Returns:
-            List of search results with snippets only
-        """
-        try:
-            results = await self._call_mcp_tool(
-                "get-web-search-summaries",
-                {
-                    "query": query,
-                    "limit": min(max_results, 10)
-                }
-            )
-            
-            if results:
-                return self._format_summaries(results)
-            else:
-                logger.warning(f"No summaries found for query: {query}")
-                return []
-                
-        except Exception as e:
-            logger.error(f"Error during summary search: {e}")
             return []
     
-    async def get_page_content(self, url: str, max_length: int = 5000) -> Optional[str]:
-        """
-        Extract content from a specific webpage.
-        
-        Args:
-            url: URL of the page to extract
-            max_length: Maximum content length
-            
-        Returns:
-            Extracted page content or None
-        """
-        try:
-            result = await self._call_mcp_tool(
-                "get-single-web-page-content",
-                {
-                    "url": url,
-                    "maxContentLength": max_length
-                }
-            )
-            
-            if result and "content" in result:
-                return result["content"]
-            else:
-                logger.warning(f"No content extracted from URL: {url}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error extracting page content: {e}")
-            return None
+
+    
+
     
     async def _call_mcp_tool(self, tool_name: str, params: Dict[str, Any]) -> Optional[Any]:
         """
@@ -213,36 +156,3 @@ class MCPWebSearchService:
         
         return formatted_results
     
-    def _format_summaries(self, mcp_response: Any) -> List[Dict[str, Any]]:
-        """
-        Format summary results from web-search-mcp.
-        
-        Args:
-            mcp_response: Raw response from MCP server
-            
-        Returns:
-            List of formatted search summaries
-        """
-        formatted_results = []
-        
-        # Handle different response structures
-        if isinstance(mcp_response, dict):
-            results = mcp_response.get("results", [])
-        elif isinstance(mcp_response, list):
-            results = mcp_response
-        else:
-            return []
-        
-        for result in results:
-            formatted_result = {
-                "title": result.get("title", ""),
-                "content": result.get("snippet", result.get("description", "")),
-                "url": result.get("url", ""),
-                "metadata": {
-                    "source": "web_search_summary",
-                    "url": result.get("url", "")
-                }
-            }
-            formatted_results.append(formatted_result)
-        
-        return formatted_results

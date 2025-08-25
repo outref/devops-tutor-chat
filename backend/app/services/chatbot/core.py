@@ -237,15 +237,12 @@ class DevOpsChatbot:
         messages = state["messages"]
         topic = state.get("topic", "")
         is_valid = state.get("is_valid", True)
-        topic_category_valid = state.get("topic_category_valid", True)
-        is_first_message = state.get("is_first_message", False)
         rag_results = state.get("rag_results", [])
         web_results = state.get("web_results", [])
         
         # Use content generator service
         response = await self.content_generator.generate_response(
-            messages, topic, rag_results, web_results,
-            is_valid, topic_category_valid, is_first_message
+            messages, topic, rag_results, web_results, is_valid
         )
         
         state["current_response"] = response

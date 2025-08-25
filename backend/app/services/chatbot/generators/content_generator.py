@@ -58,16 +58,10 @@ class ContentGenerator:
     async def generate_response(self, messages: List[BaseMessage], topic: str, 
                               rag_results: List[Dict[str, Any]] = None, 
                               web_results: List[Dict[str, Any]] = None,
-                              is_valid: bool = True, 
-                              topic_category_valid: bool = True,
-                              is_first_message: bool = False) -> str:
+                              is_valid: bool = True) -> str:
         """Generate regular response for subsequent messages or invalid topics"""
-        # Handle invalid topic category (first message)
-        if is_first_message and not topic_category_valid:
-            return "I'm sorry, but I can only help with topics related to Programming, DevOps, and AI/Machine Learning. Please ask a question about software development, infrastructure, automation, data science, or related technical topics."
-        
         # Handle invalid topic for subsequent messages
-        if not is_first_message and not is_valid:
+        if not is_valid:
             return f"I'm focused on helping you learn about {topic}. Please ask questions related to this topic. If you'd like to explore a different topic, please start a new conversation."
         
         # Build context from RAG and web results
