@@ -1,208 +1,162 @@
-# DevOps Learning Chatbot
+# DevOps Chatbot - AI Learning Assistant
 
-A conversational AI assistant for learning DevOps topics, powered by LangChain/LangGraph with RAG (Retrieval-Augmented Generation) and MCP (Model Context Protocol) integration.
+An intelligent chatbot system for Programming, DevOps, and AI education using **LangGraph**, **RAG search**, **MCP web search**, and interactive **quiz generation**.
 
-## Features
+## Architecture Overview
 
-- 🤖 **AI-Powered Learning**: Interactive chatbot specialized in DevOps topics
-- 📚 **RAG Integration**: Retrieval-Augmented Generation for accurate, context-aware responses
-- 🔍 **Web Search Integration**: Local web search powered by web-search-mcp server (no API key required)
-- 💬 **Conversation History**: Persistent chat history with session management
-- 🎯 **Topic Focus**: Stays on-topic and prevents unrelated conversations
-- 🎨 **Modern UI**: Beautiful chat interface inspired by AI assistants like Claude
-- 🐳 **Fully Dockerized**: Easy deployment with Docker Compose
+### LangGraph Workflow Engine
+The chatbot uses **LangGraph** to orchestrate a sophisticated conversation flow:
 
-## Supported Topics
+```python
+# Core workflow nodes
+topic_extraction → topic_category_validation → rag_search → web_search → generate_lesson
+                                            ↓
+                        quiz_generation → process_quiz_answer
+```
 
-- Kubernetes (K8s)
-- Docker & Containerization
-- CI/CD Pipelines
-- AWS CLI & Services
-- Google Cloud (gcloud)
-- Terraform (Infrastructure as Code)
-- Ansible (Configuration Management)
-- Monitoring (Prometheus, Grafana)
-- And more DevOps topics!
+**Key Graph Nodes:**
+- **Topic Extraction**: Identifies conversation topics using LLM
+- **Topic Validation**: Ensures queries are within Programming/DevOps/AI domains  
+- **RAG Search**: Vector similarity search against knowledge base
+- **Web Search**: MCP-powered real-time web search fallback
+- **Quiz Generation**: Creates personalized quizzes from conversation history
+- **Content Generation**: Structured lesson creation and response generation
 
-## Prerequisites
+**State Management:**
+- Persistent conversation state with `MemorySaver`
+- Quiz progress tracking across sessions
+- Used question tracking to prevent repetition
 
-- Docker and Docker Compose
-- OpenAI API Key (for the LLM)
-- (Optional) LangChain API Key for tracing
+### RAG (Retrieval-Augmented Generation)
+
+**Vector Database Setup:**
+- **pgvector** extension on PostgreSQL for vector operations
+- **OpenAI embeddings** (1536 dimensions) for semantic search
+- **Similarity threshold**: 0.7 for high-quality results only
+
+**Search Process:**
+1. Query preprocessing and concept extraction using LLM
+2. Vector similarity search with cosine distance
+3. Quality filtering based on similarity scores
+4. Fallback to web search if insufficient results
+
+```python
+# Semantic search with quality threshold
+results = await rag_service.search(
+    query, 
+    similarity_threshold=0.7,
+    limit=5
+)
+```
+
+### MCP Web Search Integration
+
+**Model Context Protocol (MCP)** implementation for real-time web search:
+
+**Architecture:**
+- Standalone **web-search-mcp** service with Playwright
+- HTTP wrapper for JSON-RPC 2.0 communication
+- Dockerized with browser dependencies (Chromium/Firefox)
+
+**Web Search Flow:**
+1. RAG search quality assessment
+2. Trigger web search if RAG results insufficient  
+3. MCP service processes search queries
+4. Content extraction and relevance filtering
+5. Integration with conversation context
+
+**MCP Configuration:**
+```yaml
+environment:
+  MAX_CONTENT_LENGTH: "15000"
+  RELEVANCE_THRESHOLD: "0.3"
+  BROWSER_HEADLESS: "true"
+```
+
+### Quiz Generation System
+
+**Smart Quiz Features:**
+- **Dynamic Question Generation**: Creates questions from conversation history
+- **Question Type Variety**: Multiple choice, true/false, short answer
+- **Duplicate Prevention**: Tracks used questions across sessions
+- **Progress Tracking**: Scores and feedback system
+- **Adaptive Difficulty**: Questions based on discussed concepts
+
+**Quiz Workflow:**
+1. Analyze conversation history and extract key concepts
+2. Generate 5 diverse questions using conversation context
+3. Track question usage to avoid repetition
+4. Process answers with detailed feedback
+5. Provide completion scores and learning suggestions
+
+```python
+# Quiz state tracking
+quiz_state = {
+    "quiz_questions": [...],
+    "current_quiz_index": 0,
+    "quiz_scores": [...], 
+    "used_quiz_questions": [...]  # Prevents repetition
+}
+```
+
+## Technology Stack
+
+**Backend:**
+- **FastAPI** with async/await patterns
+- **LangChain** + **LangGraph** for AI workflow orchestration
+- **OpenAI GPT-4o-mini** for language processing
+- **PostgreSQL** + **pgvector** for vector search
+- **SQLAlchemy 2.0** with async support
+
+**Frontend:**  
+- **Vue 3** with Composition API
+- **TailwindCSS** for styling
+- **WebSocket** support for real-time chat
+
+**Infrastructure:**
+- **Docker Compose** multi-service setup
+- **MCP Server** for web search capabilities
+- **RAG Data Seeding** tools with CSV import
 
 ## Quick Start
 
-1. **Clone the repository**
-   ```bash
-   cd /path/to/devops-chatbot
-   ```
+```bash
+# Clone and setup environment
+cp .env.example .env  # Add your OPENAI_API_KEY
 
-2. **Set up environment variables**
-   ```bash
-   # Create .env file with the following variables:
-   # OPENAI_API_KEY=your_openai_api_key_here
-   # POSTGRES_PASSWORD=your_secure_password_here
-   # SECRET_KEY=your_super_secure_secret_key_here
-   ```
+# Start all services
+docker compose up --build
 
-3. **Start the application**
-   ```bash
-   docker-compose up -d
-   ```
-
-4. **Seed the database with RAG content** (optional but recommended)
-   ```bash
-   # Enter backend container
-   docker-compose exec backend bash
-   cd rag-data
-   ./seed_rag.sh
-   
-   # Or from host machine (if backend is built)
-   cd backend/rag-data
-   ./seed_rag.sh
-   ```
-
-5. **Access the application**
-   - Frontend: http://localhost:3001
-   - Backend API: http://localhost:8000
-   - API Documentation: http://localhost:8000/docs
-
-## Architecture
-
-### Backend (FastAPI + LangChain)
-- **FastAPI**: RESTful API framework
-- **LangChain/LangGraph**: Orchestrates the conversational flow
-- **PostgreSQL + pgvector**: Vector database for RAG
-- **OpenAI Embeddings**: For semantic search
-- **Async architecture**: High-performance async operations
-
-### Frontend (Vue.js)
-- **Vue 3**: Composition API
-- **Tailwind CSS**: Utility-first styling
-- **Marked.js**: Markdown rendering
-- **Highlight.js**: Code syntax highlighting
-
-### Database Schema
-- **conversations**: Stores conversation metadata
-- **messages**: Chat message history
-- **documents**: RAG knowledge base with vector embeddings
-
-## How It Works
-
-1. **Topic Extraction**: When a user starts a conversation, the system extracts the DevOps topic
-2. **RAG Search**: First searches the local knowledge base using vector similarity
-3. **Web Search Enhancement**: Performs multi-engine web search for comprehensive, up-to-date information
-4. **Response Generation**: Combines context from RAG/web search to generate educational responses
-5. **Topic Validation**: Ensures conversations stay focused on the initial DevOps topic
-
-## API Endpoints
-
-### Chat Endpoints
-- `POST /api/chat/send` - Send a message to the chatbot
-- `GET /api/chat/messages/{conversation_id}` - Get messages for a conversation
-
-### Conversation Endpoints
-- `GET /api/conversations/` - List user conversations
-- `GET /api/conversations/{conversation_id}` - Get conversation details
-- `DELETE /api/conversations/{conversation_id}` - Delete a conversation
-
-## Configuration
-
-### Environment Variables
-
-```env
-# PostgreSQL
-POSTGRES_USER=chatbot
-POSTGRES_PASSWORD=chatbot123
-POSTGRES_DB=devops_chatbot
-
-# OpenAI
-OPENAI_API_KEY=your_openai_api_key
-
-# LangChain (optional)
-LANGCHAIN_API_KEY=your_langchain_api_key
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_PROJECT=devops-chatbot
-
-# Frontend
-VITE_API_URL=http://localhost:8000
+# Seed RAG database (optional)
+docker compose exec backend bash -c "cd /app/rag-data && ./seed_rag.sh"
 ```
+
+**Services:**
+- Frontend: http://localhost:3001
+- Backend API: http://localhost:8000  
+- MCP Web Search: http://localhost:3000
+
+## Key Features
+
+✅ **Contextual Learning** - RAG-powered knowledge retrieval  
+✅ **Real-time Web Search** - MCP integration for current information  
+✅ **Interactive Quizzes** - Personalized question generation  
+✅ **Graph-based Workflow** - LangGraph state management  
+✅ **Topic Validation** - Programming/DevOps/AI focus  
+✅ **Conversation Memory** - Persistent chat sessions  
+✅ **Quality Filtering** - Similarity thresholds for relevant results
 
 ## Development
 
-### Running Locally (without Docker)
-
-**Backend:**
+**Run Tests:**
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload
+docker compose exec backend python -m pytest
 ```
 
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-```
+**Database Schema:**
+- Conversations with topic tracking
+- Messages with role-based storage  
+- Documents with vector embeddings
+- Quiz state persistence
 
-### Adding RAG Content
-
-Use the RAG seeding script to populate with comprehensive content:
-
-```bash
-cd backend/rag-data
-./seed_rag.sh  # Exits if database has data
-```
-
-**Options:**
-```bash
-./seed_rag.sh                     # Exits if database has data
-./seed_rag.sh --force             # Add alongside existing data
-./seed_rag.sh custom.csv          # Use custom CSV file
-```
-
-**Features:**
-- Simple and fast processing
-- Batch processing for large datasets  
-- Pure semantic search (no topic filtering)
-- Exits cleanly if database has existing data
-
-## Web Search Integration
-
-The chatbot integrates with web-search-mcp server through the MCP (Model Context Protocol) for enhanced web search capabilities. This provides:
-
-- **Multi-Engine Search**: Automatically tries Bing, Brave, and DuckDuckGo for best results
-- **Full Content Extraction**: Fetches and extracts complete page content from search results
-- **No API Key Required**: Works with direct connections to search engines
-- **Smart Fallbacks**: Automatically switches between browser and HTTP requests for reliability
-- **Concurrent Processing**: Extracts content from multiple pages simultaneously
-
-### Available Search Tools
-
-1. **Full Web Search**: Comprehensive search with content extraction
-2. **Search Summaries**: Lightweight search returning only snippets
-3. **Page Content Extraction**: Extract content from specific URLs
-
-The web-search-mcp server runs automatically as part of the Docker Compose stack with Playwright browsers for reliable content extraction.
-
-## Troubleshooting
-
-### Database Connection Issues
-- Ensure PostgreSQL is running: `docker-compose ps`
-- Check logs: `docker-compose logs postgres`
-
-### API Connection Issues
-- Verify backend is running: `docker-compose logs backend`
-- Check CORS settings if accessing from a different domain
-
-### Frontend Build Issues
-- Clear node_modules: `docker-compose down && docker-compose up --build`
-
-## License
-
-MIT License
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+The system combines modern AI techniques with robust engineering practices to create an intelligent, scalable learning assistant.

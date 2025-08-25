@@ -76,5 +76,9 @@ async def delete_conversation(
     conversation: Conversation
 ) -> None:
     """Delete a conversation"""
-    await db.delete(conversation)
-    await db.commit()
+    try:
+        await db.delete(conversation)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise e
