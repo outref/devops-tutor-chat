@@ -53,11 +53,4 @@ class Settings(BaseSettings):
 # Global settings instance
 settings = Settings()
 
-# Debug: Print the loaded origins
-import logging
-import os
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-logger.info(f"Raw ALLOWED_ORIGINS env var: {os.getenv('ALLOWED_ORIGINS')}")
-logger.info(f"Loaded CORS origins: {settings.allowed_origins}")
-logger.info(f"CORS origins type: {type(settings.allowed_origins)}")
+# CORS origins loaded successfully

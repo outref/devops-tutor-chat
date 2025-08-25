@@ -10,7 +10,10 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the app
+# Accept build argument for API URL
+ARG VITE_API_URL=http://localhost:8000
+
+# Build the app with environment variable
 RUN npm run build
 
 # Production stage
